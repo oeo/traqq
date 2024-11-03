@@ -1,9 +1,9 @@
 [package]
 name = "traqq"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
-authors = ["taky <taky@taky.com>"]
-description = "High-performance event processing system for Redis analytics"
+authors = ["<taky@taky.com>"]
+description = "High-performance event processing system for Redis data indexing"
 repository = "https://github.com/oeo/traqq"
 license = "MIT"
 readme = "README.md"
