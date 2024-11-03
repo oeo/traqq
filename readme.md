@@ -44,14 +44,14 @@ match ProcessedEvent::from_incoming(event, &config) {
 
 ```toml
 [dependencies]
-traqq = "0.1.2"
+traqq = "0.1.3"
 ```
 
 ```bash
 # run unit tests
 cargo test
 
-# run tests with benchmarking
+# run tests w benchmarking output
 cargo test -- --nocapture
 
 # run example

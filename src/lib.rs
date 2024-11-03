@@ -580,24 +580,4 @@ impl ProcessedEvent {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_validation() {
-        let config = TraqqConfig::default();
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_invalid_timezone() {
-        let config = TraqqConfig {
-            time: TimeConfig {
-                timezone: "Invalid/Timezone".to_string(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate().is_err());
-    }
-}
+mod tests;
