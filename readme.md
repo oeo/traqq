@@ -76,8 +76,8 @@ redis commands queue:
 ### time bucketing
 events are automatically stored in time buckets:
 
-- daily `d:timestamp:...` always enabled
-- hourly `h:timestamp:...` optional, enabled via config
+- daily `d:timestamp` always enabled
+- hourly `h:timestamp` optional, enabled via config
 
 time buckets use the configured timezone (defaults to utc) and store data in unix timestamp format.
 
@@ -125,26 +125,14 @@ the order of fields in compound keys is automatically sorted for consistency.
 
 ## performance
 
-`traqq` is designed for high-performance event processing:
+traqq is designed for high-performance event processing:
 
 - processes 40,000+ events/second on a single thread
 - supports concurrent processing across multiple threads
 - memory efficient (~6.7mb for 5000 events)
 - scales well with event complexity
 
-### benchmarks
-
-realistic event processing:
-- processing latency: ~191µs per event
-- generates ~28 redis operations per event
-
-concurrent processing (4 threads):
-- 41,649 events/second
-- 6 redis commands/event average
-
-scaling with complexity:
-- simple events: 19,620 events/sec
-- complex events (20 fields): 4,427 events/sec
+## benchmarks
 
 ```
 realistic event benchmark:
