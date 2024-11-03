@@ -294,8 +294,6 @@ The Redis key structure follows the pattern:
   - pattern: Field combinations being tracked
   - values: Actual values being counted/summed
 
----
-
 ## License
 
 MIT

@@ -2,14 +2,18 @@
 name = "traqq"
 version = "0.1.0"
 edition = "2021"
+authors = ["taky <taky@taky.com>"]
+description = "High-performance event processing system for Redis analytics"
+repository = "https://github.com/oeo/traqq"
+license = "MIT"
+readme = "README.md"
 
 [dependencies]
-axum = "0.6.18"
-tokio = { version = "1.28.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4.38"
 chrono-tz = "0.10.0"
+
+[dev-dependencies]
+tokio = { version = "1.28.0", features = ["full"] }
 rand = "0.8.5"
