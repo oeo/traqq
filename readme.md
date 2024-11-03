@@ -1,3 +1,7 @@
+<p>
+    <img src="https://owij9.s3.amazonaws.com/ncZ5NFpXC.svg" height="125">
+</p>
+
 # traqq
 
 `traqq` is a work-in-progress event processing system that transforms json events into
@@ -9,22 +13,22 @@ or performing multiple queries and post-processing.
 eventually, it will also serve as a query interface for the stored data and be exposed
 via an http api as well as a wasm module for use as a native library in other projects.
 
-it essentially serves as a redis command generator.. or a really funky database indexing 
+it essentially serves as a redis command generator.. or a really funky database indexing
 system if you want to think of it that way.
 
 ## overview
 
-traqq takes flat json event objects and transforms them to various redis data commands 
+traqq takes flat json event objects and transforms them to various redis data commands
 that will track different types of metrics based on your configuration. it supports:
 
-- bitmap metrics for unique value tracking
-- counter metrics for occurence tracking
-- value-based metrics for tracking sums, counts, and other aggregations
+- hyperloglog for unique value tracking
+- increment for occurence tracking
+- incrementBy for tracking sums, counts, and other aggregations
 
 it supports compound keys for tracking combinations of event properties and
 for aggregating numerical values. pretty much everything is configurable, including the
 maximum field length, value length, and the maximum number of metrics generated from a single
-event. it also supports configurable limits for the number of compound fields in a key and 
+event. it also supports configurable limits for the number of compound fields in a key and
 if you want to track metrics at an hourly granularity or just daily.
 
 ## performance
@@ -226,7 +230,7 @@ planned features:
 - wasm module
 - additional storage adapters
 
-## components 
+## components
 
 currently, the main components are:
 
