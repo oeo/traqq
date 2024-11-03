@@ -8,7 +8,6 @@
 //! It provides a flexible configuration system for mapping event properties into different
 //! types of Redis commands, enabling complex queries without post-processing.
 
-
 pub mod utils;
 pub mod constants;
 
