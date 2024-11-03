@@ -12,10 +12,38 @@
 - **Event Processing**: Processes 40,000+ events/second on a single thread
 - **Concurrent Processing**: Supports multi-threaded event processing
 - **Memory Efficient**: ~6.7MB for 5000 events
-- **Configurable Time Buckets**: 
+- **Configurable Time Buckets**:
   - Daily buckets (always enabled)
   - Optional hourly buckets
   - Configurable timezone support
+
+## Usage
+
+See the [main.rs](src/main.rs) for a basic usage demonstration.
+
+Output:
+
+```rust
+Metrics Summary:
+---------------
+Bitmap metrics: 1
+Add metrics: 5
+Add value metrics: 5
+Total Redis ops: 11
+
+Sample Redis commands:
+  - HyperLogLog | key: bmp:d:1730592000:ip | value: 69.46.175.240
+  - Increment   | key: add:d:1730592000:event:video_ad_mute | value: 1
+  - Increment   | key: add:d:1730592000:event~utm_campaign:video_ad_mute~campaign_4 | value: 1
+  - Increment   | key: add:d:1730592000:event~utm_medium~utm_source:video_ad_mute~affiliate~facebook | value: 1
+  - Increment   | key: add:d:1730592000:event~utm_campaign~utm_medium~utm_source:video_ad_mute~campaign_4~affiliate~facebook | value: 1
+  - Increment   | key: add:d:1730592000:event~os:video_ad_mute~macOS | value: 1
+  - IncrementBy | key: adv:d:1730592000:amount:event:video_ad_mute | value: 0.99
+  - IncrementBy | key: adv:d:1730592000:amount:event~utm_campaign:video_ad_mute~campaign_4 | value: 0.99
+  - IncrementBy | key: adv:d:1730592000:amount:event~utm_medium~utm_source:video_ad_mute~affiliate~facebook | value: 0.99
+  - IncrementBy | key: adv:d:1730592000:amount:event~utm_campaign~utm_medium~utm_source:video_ad_mute~campaign_4~affiliate~facebook | value: 0.99
+  - IncrementBy | key: adv:d:1730592000:amount:event~os:video_ad_mute~macOS | value: 0.99
+```
 
 ### Metric Types
 
