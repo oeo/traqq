@@ -69,7 +69,7 @@ LimitsConfig {
     max_field_length: 128,                  // maximum field name length
     max_value_length: 512,                  // maximum value length
     max_combinations: 1000,                 // maximum unique combinations
-    max_metrics_per_event: 1000,           // maximum metrics per event
+    max_metrics_per_event: 1000,            // maximum metrics per event
 }
 ```
 
