@@ -229,15 +229,63 @@ planned features:
 
 currently, traqq serves as a library for generating redis commands from events. the main components are:
 
-- `IncomingEvent`: parses and validates json events
-- `MetricsConfig`: configures metric mapping rules
-- `ProcessedEvent`: generates redis commands based on the config
+- `IncomingEvent` parses and validates json events
+- `MetricsConfig` configures metric mapping rules
+- `ProcessedEvent` generates redis commands based on the `MetricsConfig`
+
+```rust
+let config = MetricsConfig {
+    time: TimeConfig {
+        store_hourly: true,
+        timezone: "America/New_York".to_string(),
+    },
+    mapping: MappingConfig {
+        bitmap: vec!["ip".to_string()],
+        add: vec![
+            "event".to_string(),
+            "offer".to_string(),
+            "event~offer".to_string(),
+            "event~offer~creative".to_string(),
+            "event~offer~channel".to_string(),
+        ],
+        add_value: vec![AddValueConfig {
+            key: "offer~event".to_string(),
+            add_key: "amount".to_string(),
+        }],
+    },
+    limits: LimitsConfig {
+        max_field_length: constants::defaults::MAX_FIELD_LENGTH,
+        max_value_length: constants::defaults::MAX_VALUE_LENGTH,
+        max_combinations: constants::defaults::MAX_COMBINATIONS,
+        max_metrics_per_event: constants::defaults::MAX_METRICS_PER_EVENT,
+    },
+};
+
+// example event creation from json
+let event = IncomingEvent::from_json(serde_json::json!({
+    "event": "conversion",
+    "offer": "SPECIAL10",
+    "creative": "banner1",
+    "channel": "email",
+    "amount": 99.99,
+    "ip": "127.0.0.1"
+})).unwrap();
+
+match ProcessedEvent::from_incoming(event, &config) {
+    Ok(processed) => {
+        processed.pretty_print();
+    },
+    Err(e) => {
+        println!("Error processing event: {}", e);
+    }
+}
+```
 
 example configuration and usage can be found in `main.rs`.
 
 ## run stuff
 ```bash
-# run main()
+# run main() example above
 cargo run
 
 # run tests
