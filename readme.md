@@ -44,7 +44,7 @@ match ProcessedEvent::from_incoming(event, &config) {
 
 ```toml
 [dependencies]
-traqq = "0.1.1"
+traqq = "0.1.2"
 ```
 
 ```bash
