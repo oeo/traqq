@@ -2,18 +2,39 @@
 
 `traqq` is a work-in-progress event processing system that transforms json events into
 optimized redis commands for real-time analytics. it provides a flexible configuration
-system for mapping event properties into different types of redis metrics, enabling
+system for mapping event properties into different lists of redis commands, enabling
 complex queries that would otherwise be difficult to achieve without aggregating events
 or performing multiple queries and post-processing.
 
+eventually, it will also serve as a query interface for the stored data and be exposed
+via an http api as well as a wasm module for use as a native library in other projects.
+
+it essentially serves as a redis command generator.. or a really funky database indexing 
+system if you want to think of it that way.
+
 ## overview
 
-traqq takes json events and maps them to various redis data structures based on your configuration. it supports:
+traqq takes flat json event objects and transforms them to various redis data commands 
+that will track different types of metrics based on your configuration. it supports:
 
-- bitmap metrics for unique counting
-- counter metrics for aggregations
-- value-based metrics for numerical aggregations
-- automatic time-based bucketing (hourly and daily)
+- bitmap metrics for unique value tracking
+- counter metrics for occurence tracking
+- value-based metrics for tracking sums, counts, and other aggregations
+
+it supports compound keys for tracking combinations of event properties and
+for aggregating numerical values. pretty much everything is configurable, including the
+maximum field length, value length, and the maximum number of metrics generated from a single
+event. it also supports configurable limits for the number of compound fields in a key and 
+if you want to track metrics at an hourly granularity or just daily.
+
+## performance
+
+traqq is designed for high-performance event processing:
+
+- processes 40,000+ events/second on a single thread
+- supports concurrent processing across multiple threads
+- memory efficient (~6.7mb for 5000 events)
+- scales well with event complexity
 
 ### example event
 ```bash
@@ -83,36 +104,36 @@ time buckets use the configured timezone (defaults to utc) and store data in uni
 
 ### metric types
 
-#### bitmap metrics
+#### bitmap
 used for counting unique values (e.g., unique ips, user ids). perfect for cardinality queries.
 
 ```rust
 bitmap: vec!["ip".to_string()]  // will track unique ips
 ```
 
-#### add metrics
+#### add
 counter metrics that can combine multiple fields using the `~` separator:
 
 ```rust
 add: vec![
     "event".to_string(),                    // count by event
-    "event~offer".to_string(),              // count by event + offer combinations
-    "event~offer~creative".to_string(),     // count by event + offer + creative combinations
+    "event~offer".to_string(),              // count by occurence of combinations of event + offer
+    "event~offer~creative".to_string(),     // count by occurence of combinations of event + offer + creative
 ]
 ```
 
-#### add_value metrics
+#### add_value
 numerical aggregations that combine a value with compound keys:
 
 ```rust
 add_value: vec![AddValueConfig {
-    key: "offer~event".to_string(),    // group by offer + event
-    add_key: "amount".to_string(),     // sum the amount field
+    key: "offer~event".to_string(),    // group by occurence of combinations of offer + event
+    add_key: "amount".to_string(),     // sum of the amount field
 }]
 ```
 
 ### compound keys
-fields can be combined using the `~` separator to create compound metrics. there's not a limit
+fields can be combined using the `~` delimiter to create compound metrics. there's not a limit
 for the number of fields in a compound key, although i would probably recommend keeping it to a
 reasonable number, like 3-4 fields.
 
@@ -122,15 +143,6 @@ for example:
 - `event~offer~creative` tracks unique combinations of event, offer, and creative
 
 the order of fields in compound keys is automatically sorted for consistency.
-
-## performance
-
-traqq is designed for high-performance event processing:
-
-- processes 40,000+ events/second on a single thread
-- supports concurrent processing across multiple threads
-- memory efficient (~6.7mb for 5000 events)
-- scales well with event complexity
 
 ## benchmarks
 
@@ -202,23 +214,24 @@ this is a work in progress. currently implemented:
 - compound key generation (e.g., `event~offer~creative~channel`)
   - supports a configurable level of compound keys
 - redis command generation
-  - (bmp:) bitmap commands
-  - (add:) increment commands
-  - (adv:) incrementBy (add_value) commands
+  - bitmap commands
+  - increment commands
+  - incrementBy (add_value) commands
 
 planned features:
 
 - redis pipeline execution
-- additional storage adapters
+- redis query engine
 - http api interface
-- query interface
+- wasm module
+- additional storage adapters
 
-## usage
+## components 
 
-currently, traqq serves as a library for generating redis commands from events. the main components are:
+currently, the main components are:
 
-- `IncomingEvent` parses and validates json events
 - `MetricsConfig` configures metric mapping rules
+- `IncomingEvent` parses and validates json events
 - `ProcessedEvent` generates redis commands based on the `MetricsConfig`
 
 ```rust
