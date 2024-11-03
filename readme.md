@@ -39,14 +39,14 @@ time buckets use the configured timezone (defaults to utc) and store data in uni
 
 ### metric types
 
-#### bitmap metrics (`bmp:`)
+#### bitmap metrics
 used for counting unique values (e.g., unique ips, user ids). perfect for cardinality queries.
 
 ```rust
 bitmap: vec!["ip".to_string()]  // will track unique ips
 ```
 
-#### add metrics (`add:`)
+#### add metrics
 counter metrics that can combine multiple fields using the `~` separator:
 
 ```rust
@@ -57,7 +57,7 @@ add: vec![
 ]
 ```
 
-#### add value metrics (`adv:`)
+#### add_value metrics
 numerical aggregations that combine a value with compound keys:
 
 ```rust
@@ -84,7 +84,7 @@ the order of fields in compound keys is automatically sorted for consistency.
 - memory efficient (~6.7mb for 5000 events)
 - scales well with event complexity
 
-### benchmark results
+### benchmarks
 
 ```
 realistic event processing:
@@ -96,8 +96,114 @@ concurrent processing (4 threads):
 - 6 redis commands/event average
 
 scaling with complexity:
-- simple events (1 field): 19,620 events/sec
+- simple events: 19,620 events/sec
 - complex events (20 fields): 4,427 events/sec
+```
+
+```bash
+realistic event benchmark:
+========================
+processing latency: 144.166µs
+
+metrics generated:
+bitmap metrics: 4
+add metrics: 8
+add value metrics: 2
+total redis ops: 28
+test tests::test_realistic_event_processing ... ok
+
+concurrent processing test results:
+==================================
+threads: 4
+events/thread: 250
+total events: 1000
+total duration: 23.810166ms
+events/sec: 41998.87
+total redis commands: 6000
+avg redis commands/event: 6.00
+test tests::test_concurrent_processing ... ok
+
+complexity level: 1
+events processed: 5000
+total duration: 253.997167ms
+avg duration/event: 34.506µs
+events/sec: 19685.26
+total redis commands: 30000
+avg redis commands/event: 6.00
+approximate memory usage: 6.68 mb
+
+complexity level: 5
+events processed: 5000
+total duration: 445.874666ms
+avg duration/event: 53.646µs
+events/sec: 11213.91
+total redis commands: 30000
+avg redis commands/event: 6.00
+approximate memory usage: 6.68 mb
+
+complexity level: 10
+events processed: 5000
+total duration: 662.863667ms
+avg duration/event: 73.751µs
+events/sec: 7543.03
+total redis commands: 30000
+avg redis commands/event: 6.00
+approximate memory usage: 6.68 mb
+
+complexity level: 20
+events processed: 5000
+total duration: 1.151256875s
+avg duration/event: 122.208µs
+events/sec: 4343.08
+total redis commands: 30000
+avg redis commands/event: 6.00
+approximate memory usage: 6.68 mb
+```
+
+```bash
+$ cargo run
+
+processed event summary
+----------------------
+timestamp: 2024-11-03 02:24:08.557110 UTC
+event_name: conversion
+
+properties:
+  - amount: 99.99
+  - channel: email
+  - creative: banner1
+  - event: conversion
+  - ip: 127.0.0.1
+  - offer: special10
+
+bitmap metrics:
+  - 127.0.0.1
+
+add metrics:
+  - event:conversion: 1
+  - event~offer:conversion~special10: 1
+  - channel~event~offer:email~conversion~special10: 1
+  - offer:special10: 1
+  - creative~event~offer:banner1~conversion~special10: 1
+
+add_value metrics:
+  - amount:event~offer:conversion~special10: 99.99
+
+redis commands queue:
+  - Bitmap | key: bmp:d:1730505600:127.0.0.1 | value: 1.00
+  - Bitmap | key: bmp:h:1730599200:127.0.0.1 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:event:conversion | value: 1.00
+  - IncrementBy | key: add:h:1730599200:event:conversion | value: 1.00
+  - IncrementBy | key: add:d:1730505600:offer:special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:offer:special10 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:event~offer:conversion~special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:event~offer:conversion~special10 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:creative~event~offer:banner1~conversion~special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:creative~event~offer:banner1~conversion~special10 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:channel~event~offer:email~conversion~special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:channel~event~offer:email~conversion~special10 | value: 1.00
+  - IncrementBy | key: adv:d:1730505600:amount:event~offer:conversion~special10 | value: 99.99
+  - IncrementBy | key: adv:h:1730599200:amount:event~offer:conversion~special10 | value: 99.99
 ```
 
 ## current status
@@ -105,15 +211,16 @@ scaling with complexity:
 this is a work in progress. currently implemented:
 
 - event parsing and validation
-- compound key generation (e.g., event~offer~creative~channel)
+- compound key generation (e.g., `event~offer~creative~channel`)
   - supports a configurable level of compound keys
 - redis command generation
-  - (bmp) bitmap metrics
-  - (add) increment metrics
-  - (adv) incrementBy (add_value) metrics
+  - (bmp:) bitmap commands
+  - (add:) increment commands
+  - (adv:) incrementBy (add_value) commands
 
 planned features:
 
+- redis pipeline execution
 - additional storage adapters
 - http api interface
 - query interface
