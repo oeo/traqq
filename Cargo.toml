@@ -1,6 +1,6 @@
 [package]
 name = "traqq"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["taky <taky@taky.com>"]
 description = "High-performance event processing system for Redis analytics"
