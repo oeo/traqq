@@ -25,6 +25,50 @@ traqq takes json events and maps them to various redis data structures based on 
     "amount": 99.99,
     "ip": "127.0.0.1"
 }
+
+$ cargo run
+
+processed event summary
+----------------------
+timestamp: 2024-11-03 02:24:08.557110 UTC
+event_name: conversion
+
+properties:
+  - amount: 99.99
+  - channel: email
+  - creative: banner1
+  - event: conversion
+  - ip: 127.0.0.1
+  - offer: special10
+
+bitmap metrics:
+  - 127.0.0.1
+
+add metrics:
+  - event:conversion: 1
+  - event~offer:conversion~special10: 1
+  - channel~event~offer:email~conversion~special10: 1
+  - offer:special10: 1
+  - creative~event~offer:banner1~conversion~special10: 1
+
+add_value metrics:
+  - amount:event~offer:conversion~special10: 99.99
+
+redis commands queue:
+  - Bitmap | key: bmp:d:1730505600:127.0.0.1 | value: 1.00
+  - Bitmap | key: bmp:h:1730599200:127.0.0.1 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:event:conversion | value: 1.00
+  - IncrementBy | key: add:h:1730599200:event:conversion | value: 1.00
+  - IncrementBy | key: add:d:1730505600:offer:special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:offer:special10 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:event~offer:conversion~special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:event~offer:conversion~special10 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:creative~event~offer:banner1~conversion~special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:creative~event~offer:banner1~conversion~special10 | value: 1.00
+  - IncrementBy | key: add:d:1730505600:channel~event~offer:email~conversion~special10 | value: 1.00
+  - IncrementBy | key: add:h:1730599200:channel~event~offer:email~conversion~special10 | value: 1.00
+  - IncrementBy | key: adv:d:1730505600:amount:event~offer:conversion~special10 | value: 99.99
+  - IncrementBy | key: adv:h:1730599200:amount:event~offer:conversion~special10 | value: 99.99
 ```
 
 ## features
@@ -32,8 +76,8 @@ traqq takes json events and maps them to various redis data structures based on 
 ### time bucketing
 events are automatically stored in time buckets:
 
-- daily (`d:timestamp:...`) - always enabled
-- hourly (`h:timestamp:...`) - optional, enabled via config
+- daily `d:timestamp:...` always enabled
+- hourly `h:timestamp:...` optional, enabled via config
 
 time buckets use the configured timezone (defaults to utc) and store data in unix timestamp format.
 
@@ -53,7 +97,7 @@ counter metrics that can combine multiple fields using the `~` separator:
 add: vec![
     "event".to_string(),                    // count by event
     "event~offer".to_string(),              // count by event + offer combinations
-    "event~offer~creative".to_string(),     // count by event + offer + creative
+    "event~offer~creative".to_string(),     // count by event + offer + creative combinations
 ]
 ```
 
@@ -68,10 +112,14 @@ add_value: vec![AddValueConfig {
 ```
 
 ### compound keys
-fields can be combined using the `~` separator to create compound metrics. for example:
+fields can be combined using the `~` separator to create compound metrics. there's not a limit
+for the number of fields in a compound key, although i would probably recommend keeping it to a
+reasonable number, like 3-4 fields.
 
-- `event~offer` tracks combinations of events and offers
-- `event~offer~creative` tracks combinations of events, offers, and creatives
+for example:
+
+- `event~offer` tracks combinations of event and offer
+- `event~offer~creative` tracks unique combinations of event, offer, and creative
 
 the order of fields in compound keys is automatically sorted for consistency.
 
@@ -86,7 +134,6 @@ the order of fields in compound keys is automatically sorted for consistency.
 
 ### benchmarks
 
-```
 realistic event processing:
 - processing latency: ~191µs per event
 - generates ~28 redis operations per event
@@ -98,9 +145,8 @@ concurrent processing (4 threads):
 scaling with complexity:
 - simple events: 19,620 events/sec
 - complex events (20 fields): 4,427 events/sec
-```
 
-```bash
+```
 realistic event benchmark:
 ========================
 processing latency: 144.166µs
@@ -158,52 +204,6 @@ events/sec: 4343.08
 total redis commands: 30000
 avg redis commands/event: 6.00
 approximate memory usage: 6.68 mb
-```
-
-```bash
-$ cargo run
-
-processed event summary
-----------------------
-timestamp: 2024-11-03 02:24:08.557110 UTC
-event_name: conversion
-
-properties:
-  - amount: 99.99
-  - channel: email
-  - creative: banner1
-  - event: conversion
-  - ip: 127.0.0.1
-  - offer: special10
-
-bitmap metrics:
-  - 127.0.0.1
-
-add metrics:
-  - event:conversion: 1
-  - event~offer:conversion~special10: 1
-  - channel~event~offer:email~conversion~special10: 1
-  - offer:special10: 1
-  - creative~event~offer:banner1~conversion~special10: 1
-
-add_value metrics:
-  - amount:event~offer:conversion~special10: 99.99
-
-redis commands queue:
-  - Bitmap | key: bmp:d:1730505600:127.0.0.1 | value: 1.00
-  - Bitmap | key: bmp:h:1730599200:127.0.0.1 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:event:conversion | value: 1.00
-  - IncrementBy | key: add:h:1730599200:event:conversion | value: 1.00
-  - IncrementBy | key: add:d:1730505600:offer:special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:offer:special10 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:event~offer:conversion~special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:event~offer:conversion~special10 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:creative~event~offer:banner1~conversion~special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:creative~event~offer:banner1~conversion~special10 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:channel~event~offer:email~conversion~special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:channel~event~offer:email~conversion~special10 | value: 1.00
-  - IncrementBy | key: adv:d:1730505600:amount:event~offer:conversion~special10 | value: 99.99
-  - IncrementBy | key: adv:h:1730599200:amount:event~offer:conversion~special10 | value: 99.99
 ```
 
 ## current status
