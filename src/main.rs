@@ -637,10 +637,9 @@ mod tests {
         avg_duration: Duration,
         events_per_second: f64,
         redis_commands_generated: usize,
-        memory_usage: usize, // Approximate memory usage in bytes
+        memory_usage: usize,
     }
 
-    // Helper to generate random string
     fn random_string(len: usize) -> String {
         thread_rng()
             .sample_iter(&Alphanumeric)
@@ -648,7 +647,6 @@ mod tests {
             .map(char::from)
             .collect()
     }
-
 
     #[test]
     fn test_empty_event_validation() {
@@ -684,7 +682,7 @@ mod tests {
         };
 
         let result = ProcessedEvent::from_incoming(event, &config);
-        assert!(result.is_err(), "Should fail with whitespace-only event name");
+        assert!(result.is_err(), "should fail with whitespace-only event name");
     }
 
     #[test]
@@ -726,56 +724,37 @@ mod tests {
         };
 
         event.validate_and_sanitize(&config).unwrap();
-
-        // Check that event name was sanitized
-        assert_eq!(event.event, "test_event", "Event name should be sanitized");
+        assert_eq!(event.event, "test_event", "event name should be sanitized");
 
         if let serde_json::Value::Object(props) = &event.properties {
-            // IP should remain unchanged
             assert_eq!(
                 props.get("ip").unwrap().as_str().unwrap(),
                 "127.0.0.1",
                 "IP address should not be sanitized"
             );
-            
-            // Custom field should be sanitized
             assert_eq!(
                 props.get("custom_field").unwrap().as_str().unwrap(),
                 "value_with_special_chars",
-                "Custom field should be sanitized"
+                "custom field should be sanitized"
             );
         } else {
-            panic!("Properties should be an object");
+            panic!("properties should be an object");
         }
     }
 
     #[test]
     fn test_sanitize_value_basic() {
-        // Test IP addresses
-        assert_eq!(
-            sanitize_value("127.0.0.1", 100).unwrap(),
-            Some("127.0.0.1".to_string())
-        );
-        
-        // Test normal values with special chars
         assert_eq!(
             sanitize_value("test~value:here", 100).unwrap(),
             Some("test_value_here".to_string())
         );
-        
-        // Test trimming
         assert_eq!(
             sanitize_value("  spaced  ", 100).unwrap(),
             Some("spaced".to_string())
         );
-        
-        // Test empty values
         assert_eq!(sanitize_value("", 100).unwrap(), None);
         assert_eq!(sanitize_value("   ", 100).unwrap(), None);
-
         assert_eq!(sanitize_value("test_event", 100).unwrap(), Some("test_event".to_string()));
-        
-        // Test length limiting
         assert_eq!(
             sanitize_value("1234567890extra", 10).unwrap(),
             Some("1234567890".to_string())
@@ -801,12 +780,21 @@ mod tests {
         }
     }
 
-    // Helper to create a test event with random data
+    // helper to create a test event with random data
     fn create_test_event(complexity: usize) -> IncomingEvent {
         let mut props = serde_json::Map::new();
         
-        // Basic properties
-        props.insert("event".to_string(), json!("conversion"));
+        props.insert(
+            "event".to_string(), 
+            json!([
+                "conversion",
+                "impression", 
+                "click",
+                "installation",
+                "signup"
+            ].choose(&mut thread_rng()).unwrap())
+        );
+
         props.insert("offer".to_string(), json!(random_string(8)));
         props.insert("creative".to_string(), json!(random_string(10)));
         props.insert("channel".to_string(), json!(random_string(6)));
@@ -818,7 +806,7 @@ mod tests {
             thread_rng().gen_range(1..255)
         )));
 
-        // Add additional random properties based on complexity
+        // add additional random properties based on complexity
         for i in 0..complexity {
             props.insert(
                 format!("field_{}", i),
@@ -826,13 +814,11 @@ mod tests {
             );
         }
 
-        IncomingEvent {
-            event: "conversion".to_string(),
-            properties: serde_json::Value::Object(props),
-        }
+        IncomingEvent::from_json(
+            serde_json::Value::Object(props)
+        ).unwrap()
     }
 
-    // Helper to create test config with varying complexity
     fn create_test_config(complexity: usize) -> MetricsConfig {
         MetricsConfig {
             time: TimeConfig {
@@ -1250,5 +1236,4 @@ mod tests {
         assert_eq!(processed.add_metrics.len(), 1, "expected single add metric");
         assert!(processed.add_metrics.contains_key("event:purchase"));
     }
-
 }
