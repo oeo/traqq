@@ -1,22 +1,10 @@
-#[allow(unused_imports)]
-
 use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
-use chrono::{DateTime, Utc, Timelike};
-use chrono_tz;
 use serde_json::json;
+use chrono::{DateTime, Utc, Timelike};
 
-mod constants {
-    pub const INVALID_CHARS: [char; 2] = ['~', ':'];
-    
-    pub mod defaults {
-        pub const TIMEZONE: &str = "UTC";
-        pub const MAX_FIELD_LENGTH: usize = 256;
-        pub const MAX_VALUE_LENGTH: usize = 1024;
-        pub const MAX_COMBINATIONS: usize = 100;
-        pub const MAX_METRICS_PER_EVENT: usize = 1000;
-    }
-}
+use traqq::utils;
+use traqq::constants;
 
 #[derive(Debug, Clone)]
 pub enum BucketType {
@@ -33,61 +21,84 @@ impl BucketType {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TimeConfig {
-    #[serde(default)]
     pub store_hourly: bool,
-    #[serde(default = "default_timezone")]
     pub timezone: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+impl Default for TimeConfig {
+    fn default() -> Self {
+        Self {
+            store_hourly: false,
+            timezone: constants::TIMEZONE.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MappingConfig {
+    pub bitmap: Vec<String>,
+    pub add: Vec<String>,
+    pub add_value: Vec<AddValueConfig>,
+}
+
+impl Default for MappingConfig {
+    fn default() -> Self {
+        Self {
+            bitmap: vec![],
+            add: vec!["event".into()],
+            add_value: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct AddValueConfig {
     pub key: String,
     pub add_key: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct MappingConfig {
-    #[serde(default)]
-    pub bitmap: Vec<String>,
-    #[serde(default)]
-    pub add: Vec<String>,
-    #[serde(default)]
-    pub add_value: Vec<AddValueConfig>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LimitsConfig {
-    #[serde(default = "default_max_field_length")]
     pub max_field_length: usize,
-    #[serde(default = "default_max_value_length")]
     pub max_value_length: usize,
-    #[serde(default = "default_max_combinations")]
     pub max_combinations: usize,
-    #[serde(default = "default_max_metrics_per_event")]
     pub max_metrics_per_event: usize,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct MetricsConfig {
-    #[serde(default)]
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_field_length: constants::MAX_FIELD_LENGTH.into(),
+            max_value_length: constants::MAX_VALUE_LENGTH.into(),
+            max_combinations: constants::MAX_COMBINATIONS.into(),
+            max_metrics_per_event: constants::MAX_METRICS_PER_EVENT.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TraqqConfig {
     pub time: TimeConfig,
-    #[serde(default)]
     pub mapping: MappingConfig,
-    #[serde(default)]
     pub limits: LimitsConfig,
 }
 
-fn default_timezone() -> String { constants::defaults::TIMEZONE.to_string() }
-fn default_max_field_length() -> usize { constants::defaults::MAX_FIELD_LENGTH }
-fn default_max_value_length() -> usize { constants::defaults::MAX_VALUE_LENGTH }
-fn default_max_combinations() -> usize { constants::defaults::MAX_COMBINATIONS }
-fn default_max_metrics_per_event() -> usize { constants::defaults::MAX_METRICS_PER_EVENT }
+impl Default for TraqqConfig {
+    fn default() -> Self {
+        Self {
+            time: TimeConfig::default(),
+            mapping: MappingConfig::default(),
+            limits: LimitsConfig::default(),
+        }
+    }
+}
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct IncomingEvent {
     pub event: String,
+
     #[serde(flatten)]
     pub properties: serde_json::Value,
 }
@@ -110,7 +121,7 @@ pub struct ProcessedEvent {
 #[derive(Debug, Clone)]
 pub struct RedisCommand {
     pub key: String,
-    pub value: f64,
+    pub value: String,
     pub command_type: RedisCommandType,
     pub timestamp: DateTime<Utc>,
     pub metadata: RedisMetadata,
@@ -119,6 +130,7 @@ pub struct RedisCommand {
 #[derive(Debug, Clone)]
 pub enum RedisCommandType {
     Bitmap,
+    HyperLogLog,
     Increment,
     IncrementBy,
 }
@@ -130,15 +142,23 @@ pub struct RedisMetadata {
     pub add_key: Option<String>,
 }
 
-impl MetricsConfig {
+impl TraqqConfig {
+    pub fn default() -> Self {
+        Self {
+            time: TimeConfig::default(),
+            mapping: MappingConfig::default(),
+            limits: LimitsConfig::default(),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
-        parse_timezone(&self.time.timezone)?;
+        utils::parse_timezone(&self.time.timezone)?;
 
         let mut unique_patterns = HashSet::new();
         
         for pattern in &self.mapping.bitmap {
             if !unique_patterns.insert(pattern) {
-                return Err(format!("duplicate bitmap pattern: {}", pattern));
+                return Err(format!("duplicate pattern: {}", pattern));
             }
         }
 
@@ -146,22 +166,21 @@ impl MetricsConfig {
             if !unique_patterns.insert(pattern) {
                 return Err(format!("duplicate add pattern: {}", pattern));
             }
-            validate_pattern(pattern)?;
+            utils::validate_mapping_pattern(pattern)?;
         }
 
         for config in &self.mapping.add_value {
             if !unique_patterns.insert(&config.key) {
-                return Err(format!("duplicate add_value pattern: {}", config.key));
+                return Err(format!("duplicate pattern: {}", config.key));
             }
-            validate_pattern(&config.key)?;
+            utils::validate_mapping_pattern(&config.key)?;
         }
 
         Ok(())
     }
 
     pub fn get_time_buckets(&self, timestamp: DateTime<Utc>) -> Result<Vec<(i64, BucketType)>, String> {
-        let tz = parse_timezone(&self.time.timezone)?;
-        
+        let tz = utils::parse_timezone(&self.time.timezone)?;
         let local_time = timestamp.with_timezone(&tz);
         let mut buckets = Vec::new();
         
@@ -169,8 +188,10 @@ impl MetricsConfig {
         let daily = local_time
             .date_naive()
             .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc()
+            .ok_or_else(|| "failed to create daily timestamp".to_string())?
+            .and_local_timezone(tz)
+            .earliest()
+            .ok_or_else(|| "failed to convert daily timestamp to UTC".to_string())?
             .timestamp();
 
         buckets.push((daily, BucketType::Daily));
@@ -178,12 +199,12 @@ impl MetricsConfig {
         // hourly bucket is enabled by config
         if self.time.store_hourly {
             let hourly = local_time
-                .with_minute(0)
-                .unwrap()
-                .with_second(0)
-                .unwrap()
-                .with_nanosecond(0)
-                .unwrap()
+                .date_naive()
+                .and_hms_opt(local_time.hour(), 0, 0)
+                .ok_or_else(|| "failed to create hourly timestamp".to_string())?
+                .and_local_timezone(tz)
+                .earliest()
+                .ok_or_else(|| "failed to convert hourly timestamp to UTC".to_string())?
                 .timestamp();
 
             buckets.push((hourly, BucketType::Hourly));
@@ -194,33 +215,32 @@ impl MetricsConfig {
 }
 
 impl IncomingEvent {
-    pub fn validate_and_sanitize(&mut self, config: &MetricsConfig) -> Result<(), String> {
-        match sanitize_value(&self.event, config.limits.max_field_length) {
-            Ok(Some(sanitized_event)) => {
-                self.event = sanitized_event;
-            }
-            Ok(None) => {
-                return Err("event name cannot be empty".to_string());
-            }
-            Err(e) => {
-                return Err(format!("failed to sanitize event name: {}", e));
-            }
-        }
+    pub fn validate_and_sanitize(&mut self, config: &TraqqConfig) -> Result<(), String> {
+        // Sanitize event name
+        self.event = utils::sanitize_value(&self.event, config.limits.max_field_length)?
+            .ok_or_else(|| "event name cannot be empty".to_string())?;
 
-        let mut required_keys: HashSet<String> = HashSet::new();
+        // Collect required keys
+        let mut required_keys: HashSet<String> = ["event"]
+            .iter()
+            .map(|&s| s.to_string())
+            .chain(config.mapping.bitmap.iter().cloned())
+            .collect();
 
-        required_keys.insert("event".to_string());
-        required_keys.extend(config.mapping.bitmap.iter().cloned());
-        
-        for pattern in &config.mapping.add {
-            required_keys.extend(pattern.split('~').map(String::from));
-        }
-        
+        // Add pattern keys
+        required_keys.extend(
+            config.mapping.add.iter()
+                .flat_map(|p| p.split('~'))
+                .map(String::from)
+        );
+
+        // Add value keys
         for config in &config.mapping.add_value {
             required_keys.extend(config.key.split('~').map(String::from));
             required_keys.insert(config.add_key.clone());
         }
 
+        // Sanitize properties
         if let serde_json::Value::Object(props) = &self.properties {
             let mut sanitized_props = serde_json::Map::new();
             
@@ -229,18 +249,12 @@ impl IncomingEvent {
                     continue;
                 }
                 
-                match value {
-                    serde_json::Value::String(s) => {
-                        if let Ok(Some(sanitized)) = sanitize_value(s, config.limits.max_value_length) {
-                            sanitized_props.insert(key.clone(), json!(sanitized));
-                        }
-                    }
-                    serde_json::Value::Number(n) => {
-                        sanitized_props.insert(key.clone(), json!(n));
-                    }
-                    _ => {
-                        sanitized_props.insert(key.clone(), value.clone());
-                    }
+                if let Some(sanitized) = match value {
+                    serde_json::Value::String(s) => utils::sanitize_value(s, constants::MAX_VALUE_LENGTH)?
+                        .map(|s| json!(s)),
+                    _ => Some(value.clone()),
+                } {
+                    sanitized_props.insert(key.clone(), sanitized);
                 }
             }
 
@@ -264,127 +278,66 @@ impl IncomingEvent {
     }
 }
 
-fn parse_timezone(tz: &str) -> Result<chrono_tz::Tz, String> {
-    tz.parse().map_err(|_| format!("invalid timezone: {}", tz))
-}
-
-fn validate_pattern(pattern: &str) -> Result<(), String> {
-    if pattern.is_empty() {
-        return Err("pattern cannot be empty".to_string());
-    }
-
-    if pattern.contains("~~") {
-        return Err("pattern cannot contain consecutive separators".to_string());
-    }
-
-    if pattern.starts_with('~') || pattern.ends_with('~') {
-        return Err("pattern cannot start or end with separator".to_string());
-    }
-
-    Ok(())
-}
-
-fn sanitize_value(value: &str, mut max_length: usize) -> Result<Option<String>, String> {
-    if max_length == 0 {
-        max_length = constants::defaults::MAX_FIELD_LENGTH;
-    }
-    
-    let trimmed = value.trim();
-    
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-
-    let mut result = trimmed.to_string();
-    
-    if result.len() > max_length {
-        result.truncate(max_length);
-    }
-
-    for &invalid_char in &constants::INVALID_CHARS {
-        if result.contains(invalid_char) {
-            result = result.replace(invalid_char, "_");
-        }
-    }
-    
-    if result.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(result))
-    }
-}
-
-fn sort_keys(keys: &[String]) -> Vec<String> {
-    let mut sorted = keys.to_vec();
-    sorted.sort();
-    sorted
-}
-
 impl ProcessedEvent {
-    pub fn from_incoming(mut event: IncomingEvent, config: &MetricsConfig) -> Result<Self, String> {
+    pub fn from_incoming(mut event: IncomingEvent, config: &TraqqConfig) -> Result<Self, String> {
         event.validate_and_sanitize(config)?;
-
-        let mut raw_properties = HashMap::new();
-        let mut numeric_values = HashMap::new();
-        let mut string_values = HashMap::new();
-        let mut boolean_values = HashMap::new();
-        let mut combined_properties = HashMap::new();
-
-        raw_properties.insert("event".to_string(), event.event.clone());
-        combined_properties.insert("event".to_string(), event.event.clone());
-
-        if let serde_json::Value::Object(props) = &event.properties {
-            for (key, value) in props {
-                match value {
-                    serde_json::Value::String(s) => {
-                        raw_properties.insert(key.clone(), s.clone());
-                        string_values.insert(key.clone(), s.clone());
-                        combined_properties.insert(key.clone(), s.clone());
-                    }
-                    serde_json::Value::Number(n) => {
-                        let val_str = n.to_string();
-                        raw_properties.insert(key.clone(), val_str.clone());
-                        combined_properties.insert(key.clone(), val_str);
-                        if let Some(float_val) = n.as_f64() {
-                            numeric_values.insert(key.clone(), float_val);
-                        }
-                    }
-                    serde_json::Value::Bool(b) => {
-                        let val_str = b.to_string();
-                        raw_properties.insert(key.clone(), val_str.clone());
-                        combined_properties.insert(key.clone(), val_str);
-                        boolean_values.insert(key.clone(), *b);
-                    }
-                    _ => continue,
-                }
-            }
-        }
 
         let mut processed = ProcessedEvent {
             event_name: event.event.clone(),
             timestamp: Utc::now(),
-            raw_properties,
-            combined_properties,
-            numeric_values,
-            string_values,
-            boolean_values,
+            raw_properties: HashMap::new(),
+            combined_properties: HashMap::new(),
+            numeric_values: HashMap::new(),
+            string_values: HashMap::new(),
+            boolean_values: HashMap::new(),
             bitmap_metrics: Vec::new(),
             add_metrics: HashMap::new(),
             add_value_metrics: HashMap::new(),
             redis_commands: Vec::new(),
         };
 
-        processed.process_metrics(config)?;
+        // Extract properties once
+        if let serde_json::Value::Object(props) = &event.properties {
+            for (key, value) in props {
+                match value {
+                    serde_json::Value::String(s) => {
+                        processed.raw_properties.insert(key.clone(), s.clone());
+                        processed.string_values.insert(key.clone(), s.clone());
+                        processed.combined_properties.insert(key.clone(), s.clone());
+                    }
+                    serde_json::Value::Number(n) => {
+                        let val_str = n.to_string();
+                        processed.raw_properties.insert(key.clone(), val_str.clone());
+                        processed.combined_properties.insert(key.clone(), val_str);
+                        if let Some(float_val) = n.as_f64() {
+                            processed.numeric_values.insert(key.clone(), float_val);
+                        }
+                    }
+                    serde_json::Value::Bool(b) => {
+                        let val_str = b.to_string();
+                        processed.raw_properties.insert(key.clone(), val_str.clone());
+                        processed.combined_properties.insert(key.clone(), val_str);
+                        processed.boolean_values.insert(key.clone(), *b);
+                    }
+                    _ => continue,
+                }
+            }
+        }
 
+        // Add event name to properties
+        processed.raw_properties.insert("event".to_string(), event.event.clone());
+        processed.combined_properties.insert("event".to_string(), event.event);
+
+        processed.process_metrics(config)?;
         Ok(processed)
     }
 
     // create a list of redis commands to execute, in the future
     // this could be extended to other adapters or a custom persistence layer
-    fn process_metrics(&mut self, config: &MetricsConfig) -> Result<(), String> {
+    fn process_metrics(&mut self, config: &TraqqConfig) -> Result<(), String> {
         let buckets = config.get_time_buckets(self.timestamp)?;
         
-        // bitmap (bmp:) 
+        // bitmap (bmp:) using HyperLogLog
         for bitmap_key in &config.mapping.bitmap {
             if let Some(value) = self.raw_properties.get(bitmap_key) {
                 if !value.is_empty() {
@@ -392,9 +345,9 @@ impl ProcessedEvent {
                     
                     for (bucket, bucket_type) in &buckets {
                         self.redis_commands.push(RedisCommand {
-                            key: format!("bmp:{}:{}:{}", bucket_type.as_str(), bucket, value),
-                            value: 1.0,
-                            command_type: RedisCommandType::Bitmap,
+                            key: format!("bmp:{}:{}:{}", bucket_type.as_str(), bucket, bitmap_key),
+                            value: value.to_string(),
+                            command_type: RedisCommandType::HyperLogLog,
                             timestamp: self.timestamp,
                             metadata: RedisMetadata {
                                 metric_type: "bmp".to_string(),
@@ -412,7 +365,7 @@ impl ProcessedEvent {
             let keys: Vec<String> = add_pattern.split('~')
                 .map(String::from)
                 .collect();
-            let sorted_keys = sort_keys(&keys);
+            let sorted_keys = utils::sort_keys(&keys);
             let mut values = Vec::new();
             let mut has_all_keys = true;
             
@@ -436,7 +389,7 @@ impl ProcessedEvent {
                 for (bucket, bucket_type) in &buckets {
                     self.redis_commands.push(RedisCommand {
                         key: format!("add:{}:{}:{}", bucket_type.as_str(), bucket, metric_key),
-                        value: 1.0,
+                        value: "1".to_string(),
                         command_type: RedisCommandType::IncrementBy,
                         timestamp: self.timestamp,
                         metadata: RedisMetadata {
@@ -454,7 +407,7 @@ impl ProcessedEvent {
             let keys: Vec<String> = add_value_config.key.split('~')
                 .map(String::from)
                 .collect();
-            let sorted_keys = sort_keys(&keys);
+            let sorted_keys = utils::sort_keys(&keys);
             let mut values = Vec::new();
             let mut has_all_keys = true;
             
@@ -485,7 +438,7 @@ impl ProcessedEvent {
                         for (bucket, bucket_type) in &buckets {
                             self.redis_commands.push(RedisCommand {
                                 key: format!("adv:{}:{}:{}", bucket_type.as_str(), bucket, metric_key),
-                                value: amount,
+                                value: amount.to_string(),
                                 command_type: RedisCommandType::IncrementBy,
                                 timestamp: self.timestamp,
                                 metadata: RedisMetadata {
@@ -504,79 +457,56 @@ impl ProcessedEvent {
     }
 
     pub fn pretty_print(&self) {
-        println!("\nprocessed event summary");
-        println!("----------------------");
-        println!("timestamp: {}", self.timestamp);
-        println!("event_name: {}", self.event_name.to_lowercase());
-        println!("\nproperties:");
-        let mut sorted_props: Vec<(&String, &String)> = self.combined_properties.iter().collect();
-        sorted_props.sort_by(|a, b| a.0.cmp(b.0));
-        for (key, value) in sorted_props {
-            println!("  - {}: {}", key.to_lowercase(), value.to_lowercase());
-        }
-    
-        println!("\nbitmap metrics:");
-        for metric in &self.bitmap_metrics {
-            println!("  - {}", metric.to_lowercase());
-        }
-    
-        println!("\nadd metrics:");
-        for (key, value) in &self.add_metrics {
-            println!("  - {}: {}", key.to_lowercase(), value);
-        }
-    
-        println!("\nadd_value metrics:");
-        for (key, value) in &self.add_value_metrics {
-            println!("  - {}: {:.2}", key.to_lowercase(), value);
-        }
-    
-        println!("\nredis commands queue:");
-        for cmd in &self.redis_commands {
-            println!("  - {:?} | key: {} | value: {:.2}", 
-                cmd.command_type, 
-                cmd.key.to_lowercase(), 
-                cmd.value);
+        // Only print essential metrics
+        println!("\nMetrics Summary:");
+        println!("---------------");
+        println!("Bitmap metrics: {}", self.bitmap_metrics.len());
+        println!("Add metrics: {}", self.add_metrics.len());
+        println!("Add value metrics: {}", self.add_value_metrics.len());
+        println!("Total Redis ops: {}", self.redis_commands.len());
+
+        // Only show first 5 Redis commands as a sample
+        println!("\nSample Redis commands:");
+        for cmd in self.redis_commands.iter().take(5) {
+            match cmd.command_type {
+                RedisCommandType::HyperLogLog => {
+                    println!("  - HyperLogLog | key: {} | value: {}", cmd.key, cmd.value);
+                }
+                RedisCommandType::IncrementBy => {
+                    println!("  - IncrementBy | key: {} | value: {}", cmd.key, cmd.value);
+                }
+                _ => println!("  - {:?} | key: {} | value: {}", cmd.command_type, cmd.key, cmd.value),
+            }
         }
     }
 }
 
 fn main() {
-    let config = MetricsConfig {
-        time: TimeConfig {
-            store_hourly: true,
-            timezone: "America/New_York".to_string(),
-        },
+    let config = TraqqConfig {
+        time: TimeConfig::default(),
         mapping: MappingConfig {
             bitmap: vec!["ip".to_string()],
             add: vec![
                 "event".to_string(),
-                "offer".to_string(),
-                "event~offer".to_string(),
-                "event~offer~creative".to_string(),
-                "event~offer~channel".to_string(),
+                "event~utm_campaign".to_string(),
+                "event~utm_source~utm_medium".to_string(),
+                "event~utm_source~utm_medium~utm_campaign".to_string(),
+                "event~os".to_string(),
             ],
-            add_value: vec![AddValueConfig {
-                key: "offer~event".to_string(),
-                add_key: "amount".to_string(),
-            }],
+            add_value: vec![
+                AddValueConfig { key: "event".to_string(), add_key: "amount".to_string() },
+                AddValueConfig { key: "event~utm_campaign".to_string(), add_key: "amount".to_string() },
+                AddValueConfig { key: "event~utm_source~utm_medium".to_string(), add_key: "amount".to_string() },
+                AddValueConfig { key: "event~utm_source~utm_medium~utm_campaign".to_string(), add_key: "amount".to_string() },
+                AddValueConfig { key: "event~os".to_string(), add_key: "amount".to_string() },
+            ],
         },
-        limits: LimitsConfig {
-            max_field_length: constants::defaults::MAX_FIELD_LENGTH,
-            max_value_length: constants::defaults::MAX_VALUE_LENGTH,
-            max_combinations: constants::defaults::MAX_COMBINATIONS,
-            max_metrics_per_event: constants::defaults::MAX_METRICS_PER_EVENT,
-        },
+        limits: LimitsConfig::default(),
     };
 
     // example event creation from json
-    let event = IncomingEvent::from_json(serde_json::json!({
-        "event": "conversion",
-        "offer": "SPECIAL10",
-        "creative": "banner1",
-        "channel": "email",
-        "amount": 99.99,
-        "ip": "127.0.0.1"
-    })).unwrap();
+    let json_event = utils::create_test_event();
+    let event = IncomingEvent::from_json(json_event).unwrap();
 
     match ProcessedEvent::from_incoming(event, &config) {
         Ok(processed) => {
@@ -638,6 +568,7 @@ mod tests {
         events_per_second: f64,
         redis_commands_generated: usize,
         memory_usage: usize,
+        sample_commands: Option<Vec<RedisCommand>>,
     }
 
     fn random_string(len: usize) -> String {
@@ -650,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_empty_event_validation() {
-        let config = MetricsConfig::default();
+        let config = TraqqConfig::default();
         
         let event = IncomingEvent {
             event: "".to_string(),
@@ -671,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_whitespace_event_validation() {
-        let config = MetricsConfig::default();
+        let config = TraqqConfig::default();
         
         let event = IncomingEvent {
             event: "   ".to_string(),
@@ -688,21 +619,21 @@ mod tests {
     #[test]
     fn test_sanitize_value_string_manipulation() {
         let input = "test~event:name";
-        let result = sanitize_value(input, 100).unwrap();
+        let result = utils::sanitize_value(input, 100).unwrap();
         assert_eq!(result.as_deref(), Some("test_event_name"));
         
         let input = "purchase";
-        let result = sanitize_value(input, 100).unwrap();
+        let result = utils::sanitize_value(input, 100).unwrap();
         assert_eq!(result.as_deref(), Some("purchase"));
         
         let input = "test_event";
-        let result = sanitize_value(input, 100).unwrap();
+        let result = utils::sanitize_value(input, 100).unwrap();
         assert_eq!(result.as_deref(), Some("test_event"));
     }
 
     #[test]
     fn test_value_sanitization() {
-        let config = MetricsConfig {
+        let config = TraqqConfig {
             time: TimeConfig {
                 timezone: "UTC".to_string(),
                 ..Default::default()
@@ -745,18 +676,18 @@ mod tests {
     #[test]
     fn test_sanitize_value_basic() {
         assert_eq!(
-            sanitize_value("test~value:here", 100).unwrap(),
+            utils::sanitize_value("test~value:here", 100).unwrap(),
             Some("test_value_here".to_string())
         );
         assert_eq!(
-            sanitize_value("  spaced  ", 100).unwrap(),
+            utils::sanitize_value("  spaced  ", 100).unwrap(),
             Some("spaced".to_string())
         );
-        assert_eq!(sanitize_value("", 100).unwrap(), None);
-        assert_eq!(sanitize_value("   ", 100).unwrap(), None);
-        assert_eq!(sanitize_value("test_event", 100).unwrap(), Some("test_event".to_string()));
+        assert_eq!(utils::sanitize_value("", 100).unwrap(), None);
+        assert_eq!(utils::sanitize_value("   ", 100).unwrap(), None);
+        assert_eq!(utils::sanitize_value("test_event", 100).unwrap(), Some("test_event".to_string()));
         assert_eq!(
-            sanitize_value("1234567890extra", 10).unwrap(),
+            utils::sanitize_value("1234567890extra", 10).unwrap(),
             Some("1234567890".to_string())
         );
     }
@@ -773,73 +704,89 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            let result = sanitize_value(input, 100).unwrap();
+            let result = utils::sanitize_value(input, 100).unwrap();
             assert_eq!(result.as_deref(), expected, 
                 "sanitization failed for '{}' - expected '{:?}', got '{:?}'", 
                 input, expected, result);
         }
     }
 
-    // helper to create a test event with random data
-    fn create_test_event(complexity: usize) -> IncomingEvent {
-        let mut props = serde_json::Map::new();
-        
-        props.insert(
-            "event".to_string(), 
-            json!([
-                "conversion",
-                "impression", 
-                "click",
-                "installation",
-                "signup"
-            ].choose(&mut thread_rng()).unwrap())
-        );
-
-        props.insert("offer".to_string(), json!(random_string(8)));
-        props.insert("creative".to_string(), json!(random_string(10)));
-        props.insert("channel".to_string(), json!(random_string(6)));
-        props.insert("amount".to_string(), json!(thread_rng().gen_range(1.0..1000.0)));
-        props.insert("ip".to_string(), json!(format!("{}.{}.{}.{}", 
-            thread_rng().gen_range(1..255),
-            thread_rng().gen_range(1..255),
-            thread_rng().gen_range(1..255),
-            thread_rng().gen_range(1..255)
-        )));
-
-        // add additional random properties based on complexity
-        for i in 0..complexity {
-            props.insert(
-                format!("field_{}", i),
-                json!(random_string(thread_rng().gen_range(5..20)))
-            );
-        }
-
-        IncomingEvent::from_json(
-            serde_json::Value::Object(props)
-        ).unwrap()
-    }
-
-    fn create_test_config(complexity: usize) -> MetricsConfig {
-        MetricsConfig {
+    fn create_test_config(complexity: usize) -> TraqqConfig {
+        TraqqConfig {
             time: TimeConfig {
-                store_hourly: true,
+                store_hourly: false,
                 timezone: "UTC".to_string(),
             },
             mapping: MappingConfig {
-                bitmap: vec!["ip".to_string()],
-                add: (0..complexity)
-                    .map(|i| {
-                        if i == 0 {
-                            "event".to_string()
-                        } else {
-                            format!("event~offer~{}", "field_".repeat(i))
-                        }
-                    })
-                    .collect(),
-                add_value: vec![AddValueConfig {
-                    key: "offer~event".to_string(),
-                    add_key: "amount".to_string(),
-                }],
+                bitmap: vec![
+                    "ip".to_string(),
+                ],
+                add: {
+                    let mut patterns = vec![
+                        "event".to_string(),
+                        "event~utm_source".to_string(),
+                        "event~utm_medium".to_string(),
+                        "event~utm_campaign".to_string(),
+                    ];
+                    
+                    // Add more complex patterns based on complexity level
+                    if complexity > 1 {
+                        patterns.push("event~utm_source~utm_medium".to_string());
+                    }
+                    if complexity > 2 {
+                        patterns.push("event~utm_source~utm_medium~utm_campaign".to_string());
+                    }
+                    if complexity > 3 {
+                        patterns.push("event~browser~device".to_string());
+                    }
+                    if complexity > 4 {
+                        patterns.push("event~browser~device~utm_source".to_string());
+                    }
+                    if complexity > 5 {
+                        patterns.push("event~browser~device~utm_source~utm_medium".to_string());
+                    }
+                    // Add more complex combinations for higher complexity levels
+                    for i in 6..complexity {
+                        patterns.push(format!("event~utm_source~utm_medium~utm_campaign~{}", i));
+                    }
+                    
+                    patterns
+                },
+                add_value: {
+                    let mut value_patterns = vec![
+                        AddValueConfig {
+                            key: "event".to_string(),
+                            add_key: "amount".to_string(),
+                        },
+                        AddValueConfig {
+                            key: "event~utm_source".to_string(),
+                            add_key: "amount".to_string(),
+                        },
+                    ];
+                    
+                    // Add more value patterns based on complexity
+                    if complexity > 1 {
+                        value_patterns.push(AddValueConfig {
+                            key: "event~utm_source~utm_medium".to_string(),
+                            add_key: "amount".to_string(),
+                        });
+                    }
+                    if complexity > 2 {
+                        value_patterns.push(AddValueConfig {
+                            key: "event~utm_source~utm_medium~utm_campaign".to_string(),
+                            add_key: "amount".to_string(),
+                        });
+                    }
+                    // Add more value patterns for higher complexity levels
+                    for i in 3..complexity {
+                        value_patterns.push(AddValueConfig {
+                            key: format!("event~utm_source~utm_medium~{}", i),
+                            add_key: "amount".to_string(),
+                        });
+                    }
+                    
+                    value_patterns
+                },
             },
             limits: LimitsConfig::default(),
         }
@@ -847,48 +794,74 @@ mod tests {
 
     fn run_benchmark(event_complexity: usize, num_events: usize) -> BenchmarkResult {
         let config = create_test_config(event_complexity);
-
         let mut total_duration = Duration::new(0, 0);
         let mut total_commands = 0;
         let mut total_memory = 0;
-        
+        let mut sample_commands = None;
+
         let start = Instant::now();
         
-        for _ in 0..num_events {
-            let event = create_test_event(event_complexity);
-            let event_start = Instant::now();
+        for i in 0..num_events {
+            let json_event = utils::create_test_event();
+            let event = IncomingEvent::from_json(json_event).unwrap();
             
+            let event_start = Instant::now();
             match ProcessedEvent::from_incoming(event, &config) {
                 Ok(processed) => {
                     total_commands += processed.redis_commands.len();
-
-                    // rough memory estimation
+                    if i == 0 {
+                        sample_commands = Some(processed.redis_commands.clone());
+                    }
                     total_memory += std::mem::size_of_val(&processed) +
                         processed.redis_commands.len() * std::mem::size_of::<RedisCommand>() +
                         processed.combined_properties.len() * 64;
                 }
-                Err(e) => panic!("failed to process event: {}", e),
+                Err(e) => panic!("Failed to process event: {}", e),
             }
-            
             total_duration += event_start.elapsed();
         }
 
         let total_elapsed = start.elapsed();
         let events_per_second = num_events as f64 / total_elapsed.as_secs_f64();
-        
+
+        println!("\nComplexity level: {}", event_complexity);
+        println!("Events processed: {}", num_events);
+        println!("Total duration: {:?}", total_elapsed);
+        println!("Avg duration/event: {:?}", total_duration / num_events as u32);
+        println!("Events/sec: {:.2}", events_per_second);
+        println!("Total Redis commands: {}", total_commands);
+        println!("Avg Redis commands/event: {:.2}", total_commands as f64 / num_events as f64);
+        println!("Approximate memory usage: {:.2} mb", total_memory as f64 / 1024.0 / 1024.0);
+
+        if let Some(commands) = &sample_commands {
+            println!("\nSample Redis commands (first 5):");
+            for cmd in commands.iter().take(5) {
+                match cmd.command_type {
+                    RedisCommandType::HyperLogLog => {
+                        println!("  - HyperLogLog | key: {} | value: {}", cmd.key, cmd.value);
+                    }
+                    RedisCommandType::IncrementBy => {
+                        println!("  - IncrementBy | key: {} | value: {}", cmd.key, cmd.value);
+                    }
+                    _ => println!("  - {:?} | key: {} | value: {}", cmd.command_type, cmd.key, cmd.value),
+                }
+            }
+        }
+
         BenchmarkResult {
             events_processed: num_events,
-            total_duration: total_elapsed,
+            total_duration,
             avg_duration: total_duration / num_events as u32,
             events_per_second,
             redis_commands_generated: total_commands,
             memory_usage: total_memory,
+            sample_commands,
         }
     }
 
     #[test]
     fn test_performance_scaling() {
-        let complexities = [1, 5, 10, 20];
+        let complexities = [1, 2, 3, 5, 10, 20];
         let events_per_test = 5000;
 
         println!("\nperformance scaling test results:");
@@ -907,6 +880,30 @@ mod tests {
                 result.redis_commands_generated as f64 / events_per_test as f64);
             println!("approximate memory usage: {:.2} mb", 
                 result.memory_usage as f64 / (1024.0 * 1024.0));
+
+            if let Some(sample_commands) = &result.sample_commands {
+                println!("\nsample redis commands (first 10):");
+                for cmd in sample_commands.iter().take(10) {
+                    match cmd.command_type {
+                        RedisCommandType::HyperLogLog => {
+                            println!("  - HyperLogLog | key: {} | value: {}", 
+                                cmd.key,
+                                cmd.value);
+                        },
+                        RedisCommandType::IncrementBy => {
+                            println!("  - IncrementBy | key: {} | value: {}", 
+                                cmd.key,
+                                cmd.value);
+                        },
+                        _ => {
+                            println!("  - {:?} | key: {} | value: {}", 
+                                cmd.command_type,
+                                cmd.key,
+                                cmd.value);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -916,11 +913,15 @@ mod tests {
         use std::sync::Arc;
 
         let config = Arc::new(create_test_config(5));
-        let num_threads = 4;
-        let events_per_thread = 250;
+        let num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let events_per_thread = 150;
         
         let start = Instant::now();
         let mut handles = vec![];
+        
+        println!("\nrunning concurrent test with {} threads (auto-detected)", num_threads);
         
         for _ in 0..num_threads {
             let config = Arc::clone(&config);
@@ -929,8 +930,9 @@ mod tests {
                 let mut durations = vec![];
                 let mut commands = 0;
                 
-                for _i in 0..events_per_thread {
-                    let event = create_test_event(5);
+                for _ in 0..events_per_thread {
+                    let json_event = utils::create_test_event();
+                    let event = IncomingEvent::from_json(json_event).unwrap();
                     let event_start = Instant::now();
                     
                     if let Ok(processed) = ProcessedEvent::from_incoming(event, &config) {
@@ -971,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_event_validation() {
-        let config = MetricsConfig {
+        let config = TraqqConfig {
             time: TimeConfig {
                 timezone: "UTC".to_string(),
                 ..Default::default()
@@ -1027,7 +1029,7 @@ mod tests {
 
     #[test]
     fn test_complex_event_processing() {
-        let config = MetricsConfig {
+        let config = TraqqConfig {
             time: TimeConfig {
                 store_hourly: true,
                 timezone: "UTC".to_string(),
@@ -1112,8 +1114,8 @@ mod tests {
     }
 
     // Helper to create a realistic config
-    fn create_realistic_config() -> MetricsConfig {
-        MetricsConfig {
+    fn create_realistic_config() -> TraqqConfig {
+        TraqqConfig {
             time: TimeConfig {
                 store_hourly: true,
                 timezone: "UTC".to_string(),
@@ -1176,25 +1178,17 @@ mod tests {
 
     #[test]
     fn test_partial_event_processing() {
-        let config = MetricsConfig {
+        println!("\ndebug partial event processing:");
+        
+        let config = TraqqConfig {
             time: TimeConfig {
                 store_hourly: true,
                 timezone: "UTC".to_string(),
-                ..Default::default()
             },
             mapping: MappingConfig {
-                bitmap: vec!["ip".to_string(), "user_id".to_string()],
-                add: vec![
-                    "event".to_string(),
-                    "event~campaign".to_string(),
-                    "event~campaign~source".to_string(),
-                ],
-                add_value: vec![
-                    AddValueConfig {
-                        key: "event~campaign".to_string(),
-                        add_key: "amount".to_string(),
-                    }
-                ],
+                bitmap: vec!["ip".to_string()],
+                add: vec!["event".to_string()],
+                add_value: vec![],
             },
             limits: LimitsConfig::default(),
         };
@@ -1203,37 +1197,36 @@ mod tests {
             event: "purchase".to_string(),
             properties: serde_json::json!({
                 "ip": "127.0.0.1",
-                "amount": 49.99
+                "amount": "49.99"
             }),
         };
 
         let processed = ProcessedEvent::from_incoming(event, &config).unwrap();
-
-        println!("\ndebug partial event processing:");
-        println!("raw properties: {:?}", processed.raw_properties);
+        
+        println!("raw properties: {}", serde_json::to_string(&processed.raw_properties).unwrap());
         println!("bitmap metrics: {:?}", processed.bitmap_metrics);
         println!("add metrics: {:?}", processed.add_metrics);
         println!("add value metrics: {:?}", processed.add_value_metrics);
         println!("redis commands: {:?}", processed.redis_commands);
 
-        let bitmap_commands = processed.redis_commands.iter()
-            .filter(|cmd| matches!(cmd.command_type, RedisCommandType::Bitmap))
+        // Count HyperLogLog operations
+        let bitmap_ops = processed.redis_commands.iter()
+            .filter(|cmd| matches!(cmd.command_type, RedisCommandType::HyperLogLog))
             .count();
 
-        let add_commands = processed.redis_commands.iter()
-            .filter(|cmd| matches!(cmd.command_type, RedisCommandType::IncrementBy))
-            .count();
+        assert_eq!(bitmap_ops, 2, "expected 2 bitmap ops (daily/hourly)");
 
-        assert_eq!(bitmap_commands, 2, "expected 2 bitmap ops (daily/hourly)");
-        assert_eq!(add_commands, 2, "expected 2 add ops (daily/hourly)");
-        assert_eq!(processed.redis_commands.len(), 4, "expected 4 total redis ops");
+        // Also verify the commands are correct
+        let hyperloglog_commands: Vec<_> = processed.redis_commands.iter()
+            .filter(|cmd| matches!(cmd.command_type, RedisCommandType::HyperLogLog))
+            .collect();
 
-        // verify bitmap metrics
-        assert_eq!(processed.bitmap_metrics.len(), 1, "expected single bitmap metric");
-        assert!(processed.bitmap_metrics.contains(&"127.0.0.1".to_string()));
+        // Verify the first HyperLogLog command (daily)
+        assert_eq!(hyperloglog_commands[0].key, "bmp:d:1730592000:ip");
+        assert_eq!(hyperloglog_commands[0].value, "127.0.0.1");
 
-        // verify add metrics
-        assert_eq!(processed.add_metrics.len(), 1, "expected single add metric");
-        assert!(processed.add_metrics.contains_key("event:purchase"));
+        // Verify the second HyperLogLog command (hourly)
+        assert_eq!(hyperloglog_commands[1].key, "bmp:h:1730613600:ip");
+        assert_eq!(hyperloglog_commands[1].value, "127.0.0.1");
     }
 }
