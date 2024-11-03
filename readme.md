@@ -20,7 +20,7 @@ PC: Apple M2 Max 2023 64GB
 
 ## Quick Start
 
-See [main.rs](src/main.js) for a basic usage demonstration.
+See [main.rs](src/main.rs) for a basic usage demonstration.
 
 ```rust
 use traqq::prelude::*;
