@@ -4,306 +4,298 @@
 
 # traqq
 
-`traqq` is a work-in-progress event processing system that transforms json events into
-optimized redis commands for real-time analytics. it provides a flexible configuration
-system for mapping event properties into different lists of redis commands, enabling
-complex queries that would otherwise be difficult to achieve without aggregating events
-or performing multiple queries and post-processing.
+`traqq` is a high-performance event processing system that transforms JSON events into optimized Redis commands for real-time analytics. It provides a flexible configuration system for mapping event properties into different types of Redis commands, enabling complex queries without the need for post-processing.
 
-eventually, it will also serve as a query interface for the stored data and be exposed
-via an http api as well as a wasm module for use as a native library in other projects.
+## Features
 
-it essentially serves as a redis command generator.. or a really funky database indexing
-system if you want to think of it that way.
+### Core Functionality
+- **Event Processing**: Processes 40,000+ events/second on a single thread
+- **Concurrent Processing**: Supports multi-threaded event processing
+- **Memory Efficient**: ~6.7MB for 5000 events
+- **Configurable Time Buckets**: 
+  - Daily buckets (always enabled)
+  - Optional hourly buckets
+  - Configurable timezone support
 
-## overview
+### Metric Types
 
-traqq takes flat json event objects and transforms them to various redis data commands
-that will track different types of metrics based on your configuration. it supports:
-
-- hyperloglog for unique value tracking
-- increment for occurence tracking
-- incrementBy for tracking sums, counts, and other aggregations
-
-it supports compound keys for tracking combinations of event properties and
-for aggregating numerical values. pretty much everything is configurable, including the
-maximum field length, value length, and the maximum number of metrics generated from a single
-event. it also supports configurable limits for the number of compound fields in a key and
-if you want to track metrics at an hourly granularity or just daily.
-
-## performance
-
-traqq is designed for high-performance event processing:
-
-- processes 40,000+ events/second on a single thread
-- supports concurrent processing across multiple threads
-- memory efficient (~6.7mb for 5000 events)
-- scales well with event complexity
-
-### example event
-```bash
-{
-    "event": "conversion",
-    "offer": "special10",
-    "creative": "banner1",
-    "channel": "email",
-    "amount": 99.99,
-    "ip": "127.0.0.1"
-}
-
-$ cargo run
-
-processed event summary
-----------------------
-timestamp: 2024-11-03 02:24:08.557110 UTC
-event_name: conversion
-
-properties:
-  - amount: 99.99
-  - channel: email
-  - creative: banner1
-  - event: conversion
-  - ip: 127.0.0.1
-  - offer: special10
-
-bitmap metrics:
-  - 127.0.0.1
-
-add metrics:
-  - event:conversion: 1
-  - event~offer:conversion~special10: 1
-  - channel~event~offer:email~conversion~special10: 1
-  - offer:special10: 1
-  - creative~event~offer:banner1~conversion~special10: 1
-
-add_value metrics:
-  - amount:event~offer:conversion~special10: 99.99
-
-redis commands queue:
-  - Bitmap | key: bmp:d:1730505600:127.0.0.1 | value: 1.00
-  - Bitmap | key: bmp:h:1730599200:127.0.0.1 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:event:conversion | value: 1.00
-  - IncrementBy | key: add:h:1730599200:event:conversion | value: 1.00
-  - IncrementBy | key: add:d:1730505600:offer:special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:offer:special10 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:event~offer:conversion~special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:event~offer:conversion~special10 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:creative~event~offer:banner1~conversion~special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:creative~event~offer:banner1~conversion~special10 | value: 1.00
-  - IncrementBy | key: add:d:1730505600:channel~event~offer:email~conversion~special10 | value: 1.00
-  - IncrementBy | key: add:h:1730599200:channel~event~offer:email~conversion~special10 | value: 1.00
-  - IncrementBy | key: adv:d:1730505600:amount:event~offer:conversion~special10 | value: 99.99
-  - IncrementBy | key: adv:h:1730599200:amount:event~offer:conversion~special10 | value: 99.99
-```
-
-## features
-
-### time bucketing
-events are automatically stored in time buckets:
-
-- daily `d:timestamp` always enabled
-- hourly `h:timestamp` optional, enabled via config
-
-time buckets use the configured timezone (defaults to utc) and store data in unix timestamp format.
-
-### metric types
-
-#### bitmap
-used for counting unique values (e.g., unique ips, user ids). perfect for cardinality queries.
-
+#### 1. Bitmap Metrics (HyperLogLog)
+Used for counting unique values:
 ```rust
-bitmap: vec!["ip".to_string()]  // will track unique ips
+bitmap: vec!["ip".to_string()]  // tracks unique IPs
 ```
 
-#### add
-counter metrics that can combine multiple fields using the `~` separator:
-
+#### 2. Add Metrics (Increment)
+Counter metrics that can combine multiple fields:
 ```rust
 add: vec![
     "event".to_string(),                    // count by event
-    "event~offer".to_string(),              // count by occurence of combinations of event + offer
-    "event~offer~creative".to_string(),     // count by occurence of combinations of event + offer + creative
+    "event~offer".to_string(),              // count combinations of event + offer
+    "event~offer~creative".to_string(),     // count combinations of event + offer + creative
 ]
 ```
 
-#### add_value
-numerical aggregations that combine a value with compound keys:
-
+#### 3. Add Value Metrics (IncrementBy)
+Numerical aggregations with compound keys:
 ```rust
 add_value: vec![AddValueConfig {
-    key: "offer~event".to_string(),    // group by occurence of combinations of offer + event
-    add_key: "amount".to_string(),     // sum of the amount field
+    key: "offer~event".to_string(),         // group by offer + event
+    add_key: "amount".to_string(),          // sum of amount field
 }]
 ```
 
-### compound keys
-fields can be combined using the `~` delimiter to create compound metrics. there's not a limit
-for the number of fields in a compound key, although i would probably recommend keeping it to a
-reasonable number, like 3-4 fields.
+### Configuration System
 
-for example:
-
-- `event~offer` tracks combinations of event and offer
-- `event~offer~creative` tracks unique combinations of event, offer, and creative
-
-the order of fields in compound keys is automatically sorted for consistency.
-
-## benchmarks
-
-```
-realistic event benchmark:
-========================
-processing latency: 144.166µs
-
-metrics generated:
-bitmap metrics: 4
-add metrics: 8
-add value metrics: 2
-total redis ops: 28
-test tests::test_realistic_event_processing ... ok
-
-concurrent processing test results:
-==================================
-threads: 4
-events/thread: 250
-total events: 1000
-total duration: 23.810166ms
-events/sec: 41998.87
-total redis commands: 6000
-avg redis commands/event: 6.00
-test tests::test_concurrent_processing ... ok
-
-complexity level: 1
-events processed: 5000
-total duration: 253.997167ms
-avg duration/event: 34.506µs
-events/sec: 19685.26
-total redis commands: 30000
-avg redis commands/event: 6.00
-approximate memory usage: 6.68 mb
-
-complexity level: 5
-events processed: 5000
-total duration: 445.874666ms
-avg duration/event: 53.646µs
-events/sec: 11213.91
-total redis commands: 30000
-avg redis commands/event: 6.00
-approximate memory usage: 6.68 mb
-
-complexity level: 10
-events processed: 5000
-total duration: 662.863667ms
-avg duration/event: 73.751µs
-events/sec: 7543.03
-total redis commands: 30000
-avg redis commands/event: 6.00
-approximate memory usage: 6.68 mb
-
-complexity level: 20
-events processed: 5000
-total duration: 1.151256875s
-avg duration/event: 122.208µs
-events/sec: 4343.08
-total redis commands: 30000
-avg redis commands/event: 6.00
-approximate memory usage: 6.68 mb
+#### Time Configuration
+```rust
+TimeConfig {
+    store_hourly: true,                     // enable hourly buckets
+    timezone: "America/New_York".to_string(),// timezone for bucket calculation
+}
 ```
 
-## current status
+#### Mapping Configuration
+```rust
+MappingConfig {
+    bitmap: vec!["ip".to_string()],         // unique value tracking
+    add: vec!["event".to_string()],         // counter metrics
+    add_value: vec![/* value metrics */],   // numerical aggregations
+}
+```
 
-this is a work in progress. currently implemented:
+#### Limits Configuration
+```rust
+LimitsConfig {
+    max_field_length: 128,                  // maximum field name length
+    max_value_length: 512,                  // maximum value length
+    max_combinations: 1000,                 // maximum unique combinations
+    max_metrics_per_event: 1000,           // maximum metrics per event
+}
+```
 
-- event parsing and validation
-- compound key generation (e.g., `event~offer~creative~channel`)
-  - supports a configurable level of compound keys
-- redis command generation
-  - bitmap commands
-  - increment commands
-  - incrementBy (add_value) commands
+### Event Processing Pipeline
 
-planned features:
+1. **Event Ingestion**: Parse and validate JSON events
+2. **Sanitization**: Clean and validate field names and values
+3. **Property Extraction**: Extract and type-cast event properties
+4. **Metric Generation**: Generate metrics based on configuration
+5. **Redis Command Generation**: Prepare commands for persistence
 
-- redis pipeline execution
-- redis query engine
-- http api interface
-- wasm module
-- additional storage adapters
-
-## components
-
-currently, the main components are:
-
-- `MetricsConfig` configures metric mapping rules
-- `IncomingEvent` parses and validates json events
-- `ProcessedEvent` generates redis commands based on the `MetricsConfig`
+### Example Usage
 
 ```rust
-let config = MetricsConfig {
+let config = TraqqConfig {
     time: TimeConfig {
         store_hourly: true,
-        timezone: "America/New_York".to_string(),
+        timezone: "UTC".to_string(),
     },
     mapping: MappingConfig {
         bitmap: vec!["ip".to_string()],
         add: vec![
             "event".to_string(),
-            "offer".to_string(),
-            "event~offer".to_string(),
-            "event~offer~creative".to_string(),
-            "event~offer~channel".to_string(),
+            "event~utm_source".to_string(),
+            "event~utm_medium".to_string(),
         ],
-        add_value: vec![AddValueConfig {
-            key: "offer~event".to_string(),
-            add_key: "amount".to_string(),
-        }],
+        add_value: vec![
+            AddValueConfig {
+                key: "event".to_string(),
+                add_key: "amount".to_string(),
+            },
+        ],
     },
-    limits: LimitsConfig {
-        max_field_length: constants::defaults::MAX_FIELD_LENGTH,
-        max_value_length: constants::defaults::MAX_VALUE_LENGTH,
-        max_combinations: constants::defaults::MAX_COMBINATIONS,
-        max_metrics_per_event: constants::defaults::MAX_METRICS_PER_EVENT,
-    },
+    limits: LimitsConfig::default(),
 };
 
-// example event creation from json
+// Process an event
 let event = IncomingEvent::from_json(serde_json::json!({
-    "event": "conversion",
-    "offer": "SPECIAL10",
-    "creative": "banner1",
-    "channel": "email",
+    "event": "purchase",
     "amount": 99.99,
-    "ip": "127.0.0.1"
+    "ip": "127.0.0.1",
+    "utm_source": "google",
+    "utm_medium": "cpc"
 })).unwrap();
 
 match ProcessedEvent::from_incoming(event, &config) {
     Ok(processed) => {
-        processed.pretty_print();
+        processed.pretty_print();  // Display generated metrics
     },
-    Err(e) => {
-        println!("Error processing event: {}", e);
-    }
+    Err(e) => println!("Error: {}", e),
 }
 ```
 
-example configuration and usage can be found in `main.rs`.
+### Performance Benchmarks
 
-## run stuff
-```bash
-# run main() example above
-cargo run
+```
+Realistic Event Processing:
+========================
+Processing latency: ~144µs/event
+Metrics generated per event:
+- Bitmap metrics: 4
+- Add metrics: 8
+- Add value metrics: 2
+Total Redis ops: 28
 
-# run tests
-cargo test
+Concurrent Processing (4 threads):
+==============================
+Events/thread: 250
+Total events: 1000
+Total duration: ~24ms
+Events/sec: ~42,000
+Redis commands/event: 6
 
-# run tests with benchmarking output
-cargo test -- --nocapture
+Scaling with Complexity:
+=====================
+Level 1: ~19,685 events/sec
+Level 5: ~11,214 events/sec
+Level 10: ~7,543 events/sec
+Level 20: ~4,343 events/sec
+Memory usage: ~6.7MB for 5000 events
 ```
 
-## contrib
+### Components
 
-this project is in active development. issues and pull requests are welcome!
+#### Core Types
+- `TraqqConfig`: Main configuration struct
+- `IncomingEvent`: Raw event data
+- `ProcessedEvent`: Processed event with generated metrics
+- `RedisCommand`: Generated Redis commands
+- `RedisCommandType`: Supported Redis operations
 
-## license
+#### Utility Modules
+- `constants.rs`: System constants and defaults
+- `utils.rs`: Helper functions for validation and processing
 
-mit
+## Development Status
+
+### Implemented
+- [x] Event parsing and validation
+- [x] Property sanitization
+- [x] Compound key generation
+- [x] Metric generation
+- [x] Redis command preparation
+- [x] Concurrent processing
+- [x] Performance benchmarking
+
+### Planned Features
+- [ ] Redis pipeline execution
+- [ ] Query engine
+- [ ] HTTP API interface
+- [ ] WebAssembly module
+- [ ] Additional storage adapters
+
+### Running Tests
+```bash
+# Run all tests
+cargo test
+
+# Run tests with benchmark output
+cargo test -- --nocapture
+
+# Run example
+cargo run
+```
+
+---
+
+### Redis Command Generation & Storage
+
+When events are processed, they generate different types of Redis commands based on the metric type. Here's an example event and its resulting Redis commands:
+
+```rust
+// Input Event
+let event = IncomingEvent::from_json(serde_json::json!({
+    "event": "purchase",
+    "amount": 99.99,
+    "ip": "127.0.0.1",
+    "utm_source": "google",
+    "utm_medium": "cpc",
+    "utm_campaign": "summer_sale"
+})).unwrap();
+```
+
+#### 1. Bitmap Metrics (HyperLogLog)
+Used for counting unique values. Keys are prefixed with `bmp:`.
+
+```redis
+# Format: bmp:<bucket_type>:<timestamp>:<field>
+PFADD bmp:d:1696118400:ip 127.0.0.1
+PFADD bmp:h:1696118400:ip 127.0.0.1
+
+# To query unique counts:
+PFCOUNT bmp:d:1696118400:ip          # Daily unique IPs
+PFCOUNT bmp:h:1696118400:ip          # Hourly unique IPs
+```
+
+#### 2. Add Metrics (Increment)
+Counter metrics for event combinations. Keys are prefixed with `add:`.
+
+```redis
+# Format: add:<bucket_type>:<timestamp>:<pattern>:<values>
+INCR add:d:1696118400:event:purchase
+INCR add:d:1696118400:event~utm_source:purchase~google
+INCR add:d:1696118400:event~utm_campaign:purchase~summer_sale
+
+# To query counts:
+GET add:d:1696118400:event:purchase   # Daily purchase count
+GET add:d:1696118400:event~utm_source:purchase~google  # Daily purchases from Google
+```
+
+#### 3. Add Value Metrics (IncrementBy)
+Numerical aggregations. Keys are prefixed with `adv:`.
+
+```redis
+# Format: adv:<bucket_type>:<timestamp>:<pattern>:<values>
+INCRBY adv:d:1696118400:event:purchase 99.99
+INCRBY adv:d:1696118400:event~utm_source:purchase~google 99.99
+
+# To query sums:
+GET adv:d:1696118400:event:purchase   # Daily purchase amount
+GET adv:d:1696118400:event~utm_source:purchase~google  # Daily purchase amount from Google
+```
+
+#### Time Bucket Examples
+```redis
+# Daily buckets (d:) - UTC midnight timestamp
+bmp:d:1696118400:ip
+add:d:1696118400:event:purchase
+adv:d:1696118400:event:purchase
+
+# Hourly buckets (h:) - UTC hour timestamp
+bmp:h:1696118400:ip
+add:h:1696118400:event:purchase
+adv:h:1696118400:event:purchase
+```
+
+#### Query Patterns
+
+Common query patterns for retrieving metrics:
+
+```redis
+# Unique values in time range
+PFCOUNT bmp:d:1696118400:ip
+PFCOUNT bmp:d:1696204800:ip
+PFMERGE temp_key bmp:d:1696118400:ip bmp:d:1696204800:ip
+PFCOUNT temp_key                    # Unique IPs across two days
+
+# Aggregations by source
+MGET add:d:1696118400:event~utm_source:purchase~google \
+     add:d:1696118400:event~utm_source:purchase~facebook
+
+# Value totals by campaign
+MGET adv:d:1696118400:event~utm_campaign:purchase~summer_sale \
+     adv:d:1696118400:event~utm_campaign:purchase~winter_sale
+```
+
+The Redis key structure follows the pattern:
+- `<metric_type>:<bucket_type>:<timestamp>:<pattern>:<values>`
+  - metric_type: bmp, add, or adv
+  - bucket_type: d (daily) or h (hourly)
+  - timestamp: Unix timestamp for the bucket
+  - pattern: Field combinations being tracked
+  - values: Actual values being counted/summed
+
+---
+
+## License
+
+MIT

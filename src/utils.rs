@@ -94,6 +94,27 @@ pub const SAMPLE_EVENTS: &[&str] = &[
     "video_ad_exit_fullscreen",
 ];
 
+pub const SAMPLE_UTM_CAMPAIGNS: &[&str] = &[
+    "campaign_1",
+    "campaign_2",
+    "campaign_3",
+    "campaign_4",
+    "campaign_5",
+    "campaign_6",
+    "campaign_7",
+    "campaign_8",
+    "campaign_9",
+    "campaign_10",
+    "summer_sale",
+    "spring_sale",
+    "back_to_school",
+    "holiday_sale",
+    "black_friday",
+    "cyber_monday",
+    "new_year",
+    "valentines_day",
+];
+
 pub fn random_string(len: usize) -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
@@ -114,7 +135,7 @@ pub fn create_test_event() -> serde_json::Value {
         "utm_medium": SAMPLE_UTM_MEDIUMS.choose(&mut rng).unwrap(),
         "utm_term": SAMPLE_UTM_TERMS.choose(&mut rng).unwrap(),
         "user_agent": SAMPLE_USER_AGENTS.choose(&mut rng).unwrap(),
-        "utm_campaign": format!("campaign_{}", rng.gen_range(1..10)),
+        "utm_campaign": SAMPLE_UTM_CAMPAIGNS.choose(&mut rng).unwrap(),
         "ip": generate_random_ip(),
         "browser": "Safari",
         "os": "macOS",
