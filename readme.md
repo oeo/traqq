@@ -7,9 +7,10 @@
 A high-performance event processing system that transforms JSON events into optimized Redis commands for real-time analytics, enabling complex queries without post-processing.
 
 ## Performance Highlights
+PC: Apple M2 Max 2023 64GB
 
 - **Processing Speed**: 40,000+ events/second on a single thread
-- **Memory Efficient**: ~6.7MB for 5000 events
+- **Memory Efficient**: ~6.7MB for 5000 test events
 - **Concurrent Support**: Multi-threaded event processing
 - **Scaling Performance**:
   - Level 1: ~19,685 events/sec
@@ -37,6 +38,24 @@ match ProcessedEvent::from_incoming(event, &config) {
     Ok(processed) => processed.pretty_print(),
     Err(e) => println!("Error: {}", e),
 }
+```
+
+### Installation
+
+```toml
+[dependencies]
+traqq = "0.1.1"
+```
+
+```bash
+# run unit tests
+cargo test
+
+# run tests with benchmarking
+cargo test -- --nocapture
+
+# run example
+cargo run
 ```
 
 ## Core Features
@@ -94,36 +113,20 @@ INCRBY adv:d:1696118400:amount:event:purchase 99.99
 ## Development Status
 
 ### Implemented
-- Event parsing and validation
-- Property sanitization
-- Compound key generation
-- Metric generation
-- Redis command preparation
-- Concurrent processing
-- Performance benchmarking
+- [x] Event parsing and validation
+- [x] Property sanitization
+- [x] Compound key generation
+- [x] Metric generation
+- [x] Concurrent processing
+- [x] Performance benchmarking
 
 ### Planned
-- Redis pipeline execution
-- Query engine
-- HTTP API interface
-- WebAssembly module
-- Additional storage adapters
-
-## Usage Guide
-
-### Installation
-
-```toml
-[dependencies]
-traqq = "0.1.1"
-```
-
-### Running Tests
-```bash
-cargo test
-cargo test -- --nocapture
-cargo run
-```
+- [ ] Redis command preparation
+- [ ] Redis pipeline execution
+- [ ] Redis query interface
+- [ ] WebAssembly module
+- [ ] Command line interface
+- [ ] Additional storage adapter support
 
 ## License
 
