@@ -16,7 +16,7 @@ traqq takes json events and maps them to various redis data structures based on 
 - automatic time-based bucketing (hourly and daily)
 
 ### example event
-```json
+```bash
 {
     "event": "conversion",
     "offer": "special10",
