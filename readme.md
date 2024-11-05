@@ -10,6 +10,20 @@ Traqq is designed to be a high-performance, low-memory event processing system t
 
 Eventually, Traqq will be able to support RocksDB, Redis, and other storage solutions.
 
+### @done 
+- [x] Event parsing and validation
+- [x] Property sanitization
+- [x] Compound key generation
+- [x] Metric generation
+- [x] Concurrent processing
+- [x] Performance benchmarking
+
+### @todo 
+- [ ] Convert Redis commands to RocksDB commands
+- [ ] Network interface wrapper for RocksDB
+    - Examples in ./src/idea/*
+- [ ] Command line interface exposed in main.rs
+
 ## Performance Highlights
 PC: Apple M2 Max 2023 64GB
 
@@ -113,20 +127,6 @@ INCRBY adv:d:1696118400:amount:event:purchase 99.99
 
 - Core Types: `TraqqConfig`, `IncomingEvent`, `ProcessedEvent`, `RedisCommand`, `RedisCommandType`
 - Utility Modules: `constants.rs`, `utils.rs`
-
-### @done 
-- [x] Event parsing and validation
-- [x] Property sanitization
-- [x] Compound key generation
-- [x] Metric generation
-- [x] Concurrent processing
-- [x] Performance benchmarking
-
-### @todo 
-- [ ] RocksDB storage adapter
-- [ ] Convert Redis commands to RocksDB commands
-- [ ] Network interface wrapper for RocksDB
-- [ ] Command line interface
 
 ## License
 
