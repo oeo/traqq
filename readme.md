@@ -1,16 +1,12 @@
-<p>
-    <img src="https://owij9.s3.amazonaws.com/ncZ5NFpXC.svg" height="125">
-</p>
-
 # traqq
 
 A high-performance event processing system that transforms JSON events into optimized Redis commands for real-time analytics, enabling complex queries without post-processing.
 
-Traqq is designed to be a high-performance, low-memory event processing system that can handle large volumes of events and scale to meet the demands of even the largest organizations. It will be used to process events from a variety of sources, including web servers, mobile apps, and IoT devices. 
+Traqq is designed to be a high-performance, low-memory event processing system that can handle large volumes of events and scale to meet the demands of even the largest organizations. It will be used to process events from a variety of sources, including web servers, mobile apps, and IoT devices.
 
 Eventually, Traqq will be able to support RocksDB, Redis, and other storage solutions.
 
-### @done 
+### @done
 - [x] Event parsing and validation
 - [x] Property sanitization
 - [x] Compound key generation
@@ -18,7 +14,7 @@ Eventually, Traqq will be able to support RocksDB, Redis, and other storage solu
 - [x] Concurrent processing
 - [x] Performance benchmarking
 
-### @todo 
+### @todo
 - [ ] Convert Redis commands to RocksDB commands
 - [ ] Network interface wrapper for RocksDB
     - Examples in ./src/idea/*
