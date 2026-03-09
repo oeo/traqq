@@ -1,91 +1,132 @@
 # traqq
 
-A high-performance event processing system that transforms JSON events into optimized Redis commands for real-time analytics, enabling complex queries without post-processing.
+High-performance event metrics system. Records JSON events into pluggable storage backends and queries them back with type-aware aggregation.
 
-Traqq is designed to be a high-performance, low-memory event processing system that can handle large volumes of events and scale to meet the demands of even the largest organizations. It will be used to process events from a variety of sources, including web servers, mobile apps, and IoT devices.
+Rust rewrite of [trk2](legacy/) (CoffeeScript/Redis). Same concepts, better performance, backend-agnostic.
 
-Eventually, Traqq will be able to support RocksDB, Redis, and other storage solutions.
+## What it does
 
-### @done
-- [x] Event parsing and validation
-- [x] Property sanitization
-- [x] Compound key generation
-- [x] Metric generation
-- [x] Concurrent processing
-- [x] Performance benchmarking
+You send JSON events. Traqq generates four types of metrics from each event:
 
-### @todo
-- [ ] Convert Redis commands to RocksDB commands
-- [ ] Network interface wrapper for RocksDB
-    - Examples in ./src/idea/*
-- [ ] Command line interface exposed in main.rs
+- **bmp** (bitmap) - unique counts via HyperLogLog (e.g., unique IPs)
+- **add** - counters per field value (e.g., purchases per event type)
+- **adv** - value accumulators with sum/count summaries (e.g., revenue per campaign)
+- **top** - sorted leaderboards (e.g., top geos by volume)
 
-## Performance Highlights
-PC: Apple M2 Max 2023 64GB
+Compound keys are auto-generated from property pairs, so `event` + `geo` automatically creates `event~geo` metrics without extra config.
 
-- **Processing Speed**: 40,000+ events/second on a single thread
-- **Memory Efficient**: ~6.7MB for 5000 test events
-- **Concurrent Support**: Multi-threaded event processing
-- **Scaling Performance**:
-  - Level 1: ~19,685 events/sec
-  - Level 5: ~11,214 events/sec
-  - Level 10: ~7,543 events/sec
-  - Level 20: ~4,343 events/sec
+## Quick start
 
-## Quick Start
-
-See [main.rs](src/main.rs) for a basic usage demonstration.
+### As a library
 
 ```rust
 use traqq::prelude::*;
 
-let config = TraqqConfig::default();
-let event = IncomingEvent::from_json(serde_json::json!({
-    "event": "purchase",
-    "amount": 99.99,
-    "ip": "127.0.0.1",
-    "utm_source": "google",
-    "utm_medium": "cpc"
-})).unwrap();
+let config = TraqqConfig {
+    mapping: MappingConfig {
+        bitmap: vec!["ip".into()],
+        add: vec!["event".into(), "event~geo".into()],
+        add_value: vec![AddValueConfig {
+            key: "event~geo".into(),
+            add_key: "amount".into(),
+        }],
+        top: vec!["geo".into()],
+    },
+    ..TraqqConfig::default()
+};
 
-match ProcessedEvent::from_incoming(event, &config) {
-    Ok(processed) => processed.pretty_print(),
-    Err(e) => println!("Error: {}", e),
-}
+let traqq = Traqq::new(config, Box::new(MemoryStorage::new()), "myapp").unwrap();
+
+// record
+traqq.record(IncomingEvent::from_json(serde_json::json!({
+    "event": "purchase",
+    "ip": "1.2.3.4",
+    "geo": "US",
+    "amount": 99.99
+})).unwrap()).unwrap();
+
+// query last 7 days
+let result = traqq.query_days(7).unwrap();
+
+// find specific metrics
+let adds = result.find(FindOptions {
+    metric_type: "add".into(),
+    key: "event".into(),
+    add_key: None,
+    merge: true,
+});
+
+// shorthand
+let top_geos = result.find_str("top/geo");
 ```
 
-### Installation
+### As a server
+
+```bash
+# start with in-memory storage
+traqq serve
+
+# start with redis
+traqq serve --storage redis --redis-url redis://127.0.0.1:6379
+
+# record events
+traqq record --event '{"event":"purchase","ip":"1.2.3.4","geo":"US","amount":99.99}'
+
+# query last 10 days
+traqq query --days 10
+```
+
+### TCP protocol
+
+The server accepts newline-delimited JSON over TCP (default port 9876):
+
+```json
+{"cmd":"record","event":{"event":"purchase","ip":"1.2.3.4","amount":99.99}}
+{"cmd":"query","min":1700000000,"max":1700086400}
+{"cmd":"query_days","days":7}
+{"cmd":"find","min":1700000000,"max":1700086400,"metric_type":"add","key":"event","merge":true}
+```
+
+Responses:
+
+```json
+{"success":true}
+{"success":true,"data":[...]}
+{"success":false,"error":"..."}
+```
+
+## Installation
 
 ```toml
 [dependencies]
-traqq = "0.1.3"
+traqq = "0.2.0"
+
+# with redis support
+traqq = { version = "0.2.0", features = ["redis-storage"] }
 ```
 
-```bash
-# run unit tests
-cargo test
+## Storage backends
 
-# run tests w benchmarking output
-cargo test -- --nocapture
+| Backend | Feature flag | Use case |
+|---------|-------------|----------|
+| Memory | default | Testing, embedded, ephemeral |
+| Redis | `redis-storage` | Production, persistence |
 
-# run example
-cargo run
-```
+The `Storage` trait is public. Implement it to add your own backend.
 
-## Core Features
-
-### 1. Configuration System
+## Configuration
 
 ```rust
 TraqqConfig {
     time: TimeConfig {
-        store_hourly: true,
-        timezone: "America/New_York".to_string(),
+        store_hourly: false,          // also store hourly buckets
+        timezone: "UTC".into(),       // bucket timezone
     },
     mapping: MappingConfig {
-        bitmap: vec!["ip".to_string()],
-        add: vec!["event".to_string()],
-        add_value: vec![/* value metrics */],
+        bitmap: vec!["ip".into()],    // HyperLogLog unique counts
+        add: vec!["event".into()],    // increment counters
+        add_value: vec![...],         // value accumulators
+        top: vec!["geo".into()],      // sorted set leaderboards
     },
     limits: LimitsConfig {
         max_field_length: 128,
@@ -96,35 +137,61 @@ TraqqConfig {
 }
 ```
 
-### 2. Event Processing Pipeline
+## Key format
 
-1. Event Ingestion
-2. Sanitization
-3. Property Extraction
-4. Metric Generation
-5. Redis Command Generation
-
-### 3. Redis Integration
-
-#### Key Structure
 ```
-<metric_type>:<bucket_type>:<timestamp>:<pattern>:<values>
+prefix:type:bucket:timestamp:pattern
 ```
 
-#### Example Commands
-
-```redis
-PFADD bmp:d:1696118400:ip 127.0.0.1
-INCR add:d:1696118400:event:purchase
-INCRBY adv:d:1696118400:amount:event:purchase 99.99
+Examples:
+```
+myapp:bmp:d:1700000000:ip
+myapp:add:d:1700000000:event
+myapp:adv:d:1700000000:amount:event~geo
+myapp:adv:d:1700000000:amount:event~geo:i    (summary: sum + count)
+myapp:top:d:1700000000:geo
+myapp:k:d:1700000000                         (key tracking set)
 ```
 
-## Components
+## Performance
 
-- Core Types: `TraqqConfig`, `IncomingEvent`, `ProcessedEvent`, `RedisCommand`, `RedisCommandType`
-- Utility Modules: `constants.rs`, `utils.rs`
+Apple M2 Max, single thread:
+
+- 40,000+ events/sec processing
+- ~6.7MB for 5,000 events
+- Multi-threaded recording supported (Storage trait is Send + Sync)
+
+```bash
+cargo test -- --nocapture   # see benchmark output
+```
+
+## Project structure
+
+```
+src/
+  lib.rs              # core types, Traqq struct, query system
+  constants.rs        # defaults
+  utils.rs            # sanitize, timezone, validation
+  server.rs           # TCP server (JSON-line protocol)
+  client.rs           # TCP client
+  main.rs             # CLI
+  tests.rs            # 49 tests
+  storage/
+    mod.rs            # Storage trait + tests
+    memory.rs         # in-memory backend
+    redis.rs          # redis backend (feature-gated)
+```
+
+## Tests
+
+```bash
+# default (44 tests, no external deps)
+cargo test
+
+# with redis integration tests (49 tests, requires running redis)
+cargo test --features redis-storage
+```
 
 ## License
 
 MIT
-

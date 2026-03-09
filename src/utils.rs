@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
-use rand::{thread_rng, Rng};
-use rand::prelude::SliceRandom;
 use rand::distributions::Alphanumeric;
+use rand::prelude::SliceRandom;
+use rand::{thread_rng, Rng};
 use serde_json::json;
 
 use crate::constants;
@@ -43,13 +43,7 @@ pub const SAMPLE_UTM_MEDIUMS: &[&str] = &[
     "other",
 ];
 
-pub const SAMPLE_UTM_TERMS: &[&str] = &[
-    "loan",
-    "credit",
-    "insurance",
-    "mortgage",
-    "bank",
-];
+pub const SAMPLE_UTM_TERMS: &[&str] = &["loan", "credit", "insurance", "mortgage", "bank"];
 
 pub const SAMPLE_EVENTS: &[&str] = &[
     "page_view",
@@ -142,7 +136,7 @@ pub fn create_test_event() -> serde_json::Value {
         "os_version": "11.5.2",
         "amount": (match rng.gen_range(0..4) {
             0 => json!(99.9),
-            1 => json!(199.9), 
+            1 => json!(199.9),
             2 => json!("0.99"),
             _ => json!(rng.gen_range(1..100))
         }),
@@ -169,7 +163,8 @@ pub fn create_test_event() -> serde_json::Value {
 
 pub fn generate_random_ip() -> String {
     let mut rng = thread_rng();
-    format!("{}.{}.{}.{}",
+    format!(
+        "{}.{}.{}.{}",
         rng.gen_range(1..255),
         rng.gen_range(1..255),
         rng.gen_range(1..255),
@@ -184,9 +179,13 @@ pub fn sort_keys(keys: &[String]) -> Vec<String> {
 }
 
 pub fn sanitize_value(value: &str, max_length: usize) -> Result<Option<String>, String> {
-    let max_length = if max_length == 0 { constants::MAX_VALUE_LENGTH } else { max_length };
+    let max_length = if max_length == 0 {
+        constants::MAX_VALUE_LENGTH
+    } else {
+        max_length
+    };
     let mut result = value.trim().to_string();
-    
+
     if result.is_empty() {
         return Ok(None);
     }
@@ -201,7 +200,7 @@ pub fn sanitize_value(value: &str, max_length: usize) -> Result<Option<String>, 
     for &invalid_char in &constants::INVALID_CHARS {
         result = result.replace(invalid_char, "_");
     }
-    
+
     Ok((!result.is_empty()).then_some(result))
 }
 
@@ -209,12 +208,18 @@ pub fn parse_timezone(tz: &str) -> Result<chrono_tz::Tz, String> {
     tz.parse().map_err(|_| format!("invalid timezone: {}", tz))
 }
 
-// validate a string mapping pattern 
+// validate a string mapping pattern
 pub fn validate_mapping_pattern(pattern: &str) -> Result<(), String> {
     let validation_rules = [
         (pattern.is_empty(), "pattern cannot be empty"),
-        (pattern.contains("~~"), "pattern cannot contain consecutive separators"),
-        (pattern.starts_with('~') || pattern.ends_with('~'), "pattern cannot start or end with separator"),
+        (
+            pattern.contains("~~"),
+            "pattern cannot contain consecutive separators",
+        ),
+        (
+            pattern.starts_with('~') || pattern.ends_with('~'),
+            "pattern cannot start or end with separator",
+        ),
     ];
 
     validation_rules
@@ -263,6 +268,4 @@ mod tests {
         let result = validate_mapping_pattern(pattern);
         assert_eq!(result.is_ok(), true);
     }
-
 }
-

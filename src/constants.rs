@@ -5,4 +5,3 @@ pub const MAX_COMBINATIONS: usize = 1000;
 pub const MAX_METRICS_PER_EVENT: usize = 1000;
 pub const INVALID_CHARS: [char; 2] = ['~', ':'];
 pub const DEFAULT_MAPPING_CONFIG_ADD: &[&str] = &["event"];
-
